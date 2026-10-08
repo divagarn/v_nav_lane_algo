@@ -1,0 +1,101 @@
+{
+   "format_version_major" : 1,
+   "format_version_minor" : 0,
+   "format_version_patch" : 0,
+   "name"                 : "Parameter",
+   "section"              : 7010,
+   "comment"              : "Customer parameter section",
+   "parameters"           : [
+      {
+         "id"      : 1,
+         "name"    : "center_frequency_idx_selection",
+         "type"    : "u8",
+         "comment" : "Select center frequency via index (0=76125, 1=76372, 2=76605, 3=76485 MHz)",
+         "access"  : "rw",
+         "save"    : true,
+         "min"     : 0,
+         "max"     : 3,
+         "default" : 0
+      },
+      {
+         "id"      : 2,
+         "name"    : "frequency_sweep_idx_selection",
+         "type"    : "u8",
+         "comment" : "Select sweep/mode via index (0=LRM, 1=MRM, 2=SRM)",  
+         "access"  : "rw",
+         "save"    : true,
+         "min"     : 0,
+         "max"     : 2,
+         "default" : 0
+      },
+      {
+         "id"      : 10,
+         "name"    : "hires_mode_switch",
+         "type"    : "u8",
+         "comment" : "Switch for HIRES Mode (0=disabled, 1=enabled)",
+         "access"  : "rw",
+         "save"    : true,
+         "min"     : 0,
+         "max"     : 1,
+         "default" : 1
+      },
+      {
+         "id"      : 11,
+         "name"    : "target_validation_switch",
+         "type"    : "u8",
+         "comment" : "Enable target validation (0=disabled, 1=enabled)",
+         "access"  : "rw",
+         "save"    : true,
+         "min"     : 0,
+         "max"     : 1,
+         "default" : 1
+      },
+      {
+         "id"     : 202,
+         "name"   : "output_control_target_list_eth",
+         "type"   : "u8",
+         "comment": "Send raw targets via Ethernet (0=disabled, 1=enabled)",
+         "access" : "rw",
+         "save"   : true,
+         "min"    : 0,
+         "max"    : 1,
+         "default": 1
+      },
+      {
+         "id"     : 231,
+         "name"   : "ip_source_address",
+         "type"   : "u32",
+         "access" : "rw",
+         "save"   : true,
+         "comment": "IP source address (32bit)",
+         "default": 3232238347
+      },
+      {
+         "id"     : 233,
+         "name"   : "subnet_mask",
+         "type"   : "u32",
+         "access" : "rw",
+         "save"   : true,
+         "comment": "Subnet mask (32bit)",
+         "default": 4294967040
+      },
+      {
+         "id"     : 235,
+         "name"   : "ip_dest_address",
+         "type"   : "u32",
+         "access" : "rw",
+         "save"   : true,
+         "comment": "IP destination address (32bit)",
+         "default": 3232238353
+      },
+      {
+         "id"     : 236,
+         "name"   : "ip_dest_port",
+         "type"   : "u16",
+         "access" : "rw",
+         "save"   : true,
+         "comment": "IP destination port",
+         "default": 55555
+      }
+   ]
+}

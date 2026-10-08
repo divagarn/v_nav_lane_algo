@@ -1,0 +1,47 @@
+<?xml version="1.0" ?>
+<sdf version="1.7">
+  <world name="closed_loop_track3">
+    <include>
+      <uri>model://sun</uri>
+    </include>
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <!-- User-built world (Gazebo Building Editor), saved at
+         /home/divagar/building_editor_models/track3. Requires
+         GAZEBO_MODEL_PATH to include /home/divagar/building_editor_models
+         (already set in buggy_description's gazebo.launch.py).
+
+         Much larger and more complex than rect_loop_track.world /
+         varying_width_track.world (~111m x 174m overall): a large open
+         outer area plus a smaller interconnected room/corridor cluster
+         roughly in x=[-55,-18], y=[-88,-10]. Measured via a rasterized
+         clearance map (walls -> occupancy grid -> distance transform),
+         not eyeballed:
+           - The room cluster is a genuine mix of widths - about 12% of
+             its free-space cells are narrower than 2m (a real, too-tight-
+             for-this-vehicle doorway/passage, the same class of problem
+             that made closed_loop_track2.world/track1 unusable for this
+             vehicle's 4.4m turning radius), and about 31% are 5.6m+
+             (comfortably navigable).
+           - Default spawn point below sits in a clean, fully-enclosed
+             9.6m-wide corridor between two long parallel walls (Wall_43/
+             Wall_50 in track3/model.sdf) - verified wide, not guessed.
+         Autonomous driving may still wander into one of the narrow
+         sub-2m spots elsewhere in the cluster - that's an expected,
+         known limitation of this specific world, not a planner bug (see
+         the same finding on closed_loop_track2.world earlier this
+         session). -->
+    <include>
+      <uri>model://track3</uri>
+      <name>closed_loop_track3_walls</name>
+      <pose>0 0 0 0 0 0</pose>
+    </include>
+
+    <physics type="ode">
+      <real_time_update_rate>1000.0</real_time_update_rate>
+      <max_step_size>0.001</max_step_size>
+    </physics>
+  </world>
+</sdf>

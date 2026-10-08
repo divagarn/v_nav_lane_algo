@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>buggy_mapping</name>
+  <version>0.1.0</version>
+  <description>2D SLAM mapping (slam_toolbox, mapping mode) and 3D occupancy mapping (octomap_server), both fed by buggy_perception's ground-filtered point cloud. Launch-only package (no nodes of its own).</description>
+  <maintainer email="n.divagar18@gmail.com">divagar</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>slam_toolbox</exec_depend>
+  <exec_depend>pointcloud_to_laserscan</exec_depend>
+  <exec_depend>octomap_server</exec_depend>
+  <!-- bag_mapping_2d.launch.py instantiates these directly (velodyne_static_tf,
+       wheel_odometry, segment_ground, self_hit_filter) instead of including
+       them via buggy_sensors' real_sensors_bringup.launch.py. -->
+  <exec_depend>buggy_perception</exec_depend>
+  <exec_depend>ros2bag</exec_depend>
+  <exec_depend>buggy_mapping_tools</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>visualization_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

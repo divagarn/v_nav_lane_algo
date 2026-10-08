@@ -1,0 +1,76 @@
+# Params for dynamic_obstacle_detector_node - moving-obstacle
+# classification ported from the core idea of Asvadi et al. (RAS 2016):
+# compare each occupied cell's point density across the last
+# `history_length` merged scans against what just the current scan alone
+# contributed there. See that node's own header comment for the full
+# mechanism and why it needs no per-object clustering/tracking at all.
+# Purely a perception/visualization node: publishes ONLY the moving points
+# (as a colour-tinted 3D point cloud, full sensor resolution) on
+# /moving_obstacle_points - static points are not published at all, and
+# this does not feed costmap_lane_planner or any planner.
+
+dynamic_obstacle_detector:
+  ros__parameters:
+    use_sim_time: true
+    fixed_frame: odom
+    base_frame: base_link
+
+    # Same input costmap_lane_planner uses - already ground-removed
+    # (segment_ground) + self-hit-filtered upstream.
+    obstacle_topic: /non_ground_points_filtered
+
+    cell_size: 0.3
+    # Number of past scans (including the current one) merged for the
+    # density comparison - matches the paper's own tuned value. More
+    # history = more confident static rejection (a real static object
+    # gets more corroborating scans before its cells drop out of the
+    # moving output) but doesn't slow down recognizing a moving object as
+    # such (that classification is immediate - see the node's header
+    # comment for why this differs from a running-average/EMA design).
+    history_length: 6
+    # Only points within this radius of the vehicle's current position are
+    # processed each cycle - same bounded-working-set reasoning as
+    # costmap_lane_planner's own obstacle_search_radius.
+    obstacle_search_radius: 30.0
+
+    # static_score = (points in a cell across ALL buffered scans) /
+    # (points in that cell THIS scan x number of buffered scans) - ranges
+    # from ~1/history_length (only the current scan ever touched this
+    # cell - moving) up to 1.0 (every buffered scan corroborates it -
+    # static). A cell is only ever included in the output cloud when its
+    # static_score <= moving_threshold; everything else (confidently
+    # static, or too ambiguous/newly-seen to call yet) is simply omitted.
+    moving_threshold: 0.3
+
+    # Moving cells are grouped into contiguous (8-connected) blobs and any
+    # blob with fewer than this many TOTAL raw points is dropped before
+    # publishing. This is the actual filter against false "moving" walls:
+    # confirmed live that search-radius-boundary flicker and other
+    # newly-seen-static artifacts are thin, few-point slivers, while a
+    # real moving object (person, vehicle) is a solid blob spanning many
+    # points - raise this if walls are still slipping through, lower it
+    # if a real but small/distant moving object is being filtered out.
+    min_moving_blob_points: 15
+
+    # A blob's bounding-box longest side must NOT exceed this (meters) to
+    # be published. Confirmed live that during CONTINUOUS forward driving
+    # (not just startup/stationary jitter), a wall segment newly revealed
+    # by the vehicle driving far enough to see around whatever was
+    # occluding it also reads as under-corroborated - coverage_count only
+    # models search-radius distance, not actual line-of-sight/occlusion -
+    # and such blobs are large (100s of points) AND spatially elongated,
+    # unlike a compact real object (person, vehicle). Lower this if walls
+    # are still slipping through; raise it if a real wide/long moving
+    # obstacle (e.g. a long vehicle passing close and lengthwise) is
+    # being filtered out.
+    max_moving_blob_extent_m: 2.5
+
+    # Flat RGB tint (0-255 each) applied to every published moving point -
+    # not intensity-mapped, so it reads as visually distinct in RViz
+    # (PointCloud2 display, Color Transformer: RGB8) regardless of
+    # whatever intensity data the original sensor points carried.
+    moving_color_r: 0
+    moving_color_g: 0
+    moving_color_b: 255
+
+    process_rate_hz: 10.0

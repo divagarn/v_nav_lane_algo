@@ -1,0 +1,185 @@
+cd /home/divagar/buggy_ros2/divagar_test1_ws
+source /opt/ros/humble/setup.bash
+colcon build --packages-select buggy_description
+source install/setup.bash
+
+
+Launch (spawn + drivable), default empty world:
+
+
+ros2 launch buggy_description gazebo.launch.py
+Same, but into one of the track worlds instead of empty ground (spawn point should be clear of walls — these all default to 5,5 which is empty-world-safe, override for a track):
+
+
+ros2 launch buggy_description gazebo.launch.py \
+    world:=$(ros2 pkg prefix buggy_description)/share/buggy_description/worlds/office_track.world \
+    spawn_x:=0.0 spawn_y:=-3.0 spawn_yaw:=0.0
+Other worlds available the same way: rect_loop_track.world, closed_loop_track.world, closed_loop_track2.world, closed_loop_track3.world, varying_width_track.world.
+
+Headless (no gzclient GUI, e.g. over SSH or for quick checks): add gui:=false.
+
+Drive it manually (separate terminal, once Gazebo is up):
+
+
+ros2 topic pub /ackermann_steering_controller/reference_unstamped geometry_msgs/msg/Twist \
+    '{linear: {x: 0.5}, angular: {z: 0.1}}' --rate 10
+Topic is reference_unstamped, not reference — that's how ackermann_controllers.yaml is configured (plain Twist, not TwistStamped).
+
+Let me know what to add next (Velodyne/perception, wheel odometry, teleop_twist_keyboard wiring, etc.) and I'll build it into this same workspace step by step.
+
+
+
+
+
+
+
+
+
+
+
+Here are all three launch commands with full args, plus how to drive the vehicle after each one.
+
+1. Sensors only (sensors_bringup.launch.py)
+
+cd /home/divagar/buggy_ros2/divagar_test1_ws
+source /opt/ros/humble/setup.bash && source install/setup.bash
+
+ros2 launch buggy_sensors sensors_bringup.launch.py \
+    world_file:=office_track.world \
+    spawn_x:=0.0 spawn_y:=-3.0 spawn_yaw:=0.0 \
+    gui:=true \
+    ground_filter:=true
+2. 2D mapping (mapping_2d.launch.py)
+
+ros2 launch buggy_mapping mapping_2d.launch.py \
+    world_file:=office_track.world \
+    spawn_x:=0.0 spawn_y:=-3.0 spawn_yaw:=0.0 \
+    gui:=true rviz:=true \
+    ground_filter:=true
+3. 3D mapping (mapping_3d.launch.py)
+
+ros2 launch buggy_mapping mapping_3d.launch.py \
+    world_file:=office_track.world \
+    spawn_x:=0.0 spawn_y:=-3.0 spawn_yaw:=0.0 \
+    gui:=true \
+    ground_filter:=true
+Other worlds available for world_file:=: rect_loop_track.world, closed_loop_track.world, closed_loop_track2.world, closed_loop_track3.world, varying_width_track.world.
+
+How to move the bot (any of the three, in a separate terminal)
+Option A — keyboard teleop (recommended, interactive driving — needs a real terminal for keypresses, won't work as a background launch):
+
+
+source /opt/ros/humble/setup.bash
+ros2 run teleop_twist_keyboard teleop_twist_keyboard \
+    --ros-args -r cmd_vel:=/ackermann_steering_controller/reference_unstamped
+Then use the usual i/j/k/l keys in that terminal to drive/steer, k to stop.
+
+Option B — one-shot manual command (no interactivity, useful for quick checks):
+
+
+ros2 topic pub /ackermann_steering_controller/reference_unstamped geometry_msgs/msg/Twist \
+    '{linear: {x: 0.6}, angular: {z: 0.15}}' --rate 10
+linear.x = forward speed (m/s), angular.z = turn rate — positive turns left, negative turns right. Ctrl+C to stop (it'll keep publishing the last command until then).
+
+The topic is reference_unstamped, not reference — that's how ackermann_controllers.yaml is configured (plain Twist, not TwistStamped), same as buggy_description's own launch note.
+
+If you're doing 2D mapping, drive the full loop before saving (ros2 service call /slam_toolbox/serialize_map ...) — anything you don't drive past stays blank in the map.
+
+
+
+1. Sensors only (sensors_bringup.launch.py)
+
+cd /home/divagar/buggy_ros2/divagar_test1_ws
+source /opt/ros/humble/setup.bash && source install/setup.bash
+
+ros2 launch buggy_sensors sensors_bringup.launch.py \
+    world_file:=office_track.world \
+    spawn_x:=0.0 spawn_y:=-3.0 spawn_yaw:=0.0 \
+    gui:=true \
+    ground_filter:=true
+2. 2D mapping (mapping_2d.launch.py)
+
+ros2 launch buggy_mapping mapping_2d.launch.py \
+    world_file:=office_track.world \
+    spawn_x:=0.0 spawn_y:=-3.0 spawn_yaw:=0.0 \
+    gui:=true rviz:=true \
+    ground_filter:=true
+3. 3D mapping (mapping_3d.launch.py)
+
+ros2 launch buggy_mapping mapping_3d.launch.py \
+    world_file:=office_track.world \
+    spawn_x:=0.0 spawn_y:=-3.0 spawn_yaw:=0.0 \
+    gui:=true \
+    ground_filter:=true
+Other worlds available for world_file:=: rect_loop_track.world, closed_loop_track.world, closed_loop_track2.world, closed_loop_track3.world, varying_width_track.world.
+
+How to move the bot (any of the three, in a separate terminal)
+Option A — keyboard teleop (recommended, interactive driving — needs a real terminal for keypresses, won't work as a background launch):
+
+
+source /opt/ros/humble/setup.bash
+ros2 run teleop_twist_keyboard teleop_twist_keyboard \
+    --ros-args -r cmd_vel:=/ackermann_steering_controller/reference_unstamped
+Then use the usual i/j/k/l keys in that terminal to drive/steer, k to stop.
+
+Option B — one-shot manual command (no interactivity, useful for quick checks):
+
+
+ros2 topic pub /ackermann_steering_controller/reference_unstamped geometry_msgs/msg/Twist \
+    '{linear: {x: 0.6}, angular: {z: 0.15}}' --rate 10
+linear.x = forward speed (m/s), angular.z = turn rate — positive turns left, negative turns right. Ctrl+C to stop (it'll keep publishing the last command until then).
+
+The topic is reference_unstamped, not reference — that's how ackermann_controllers.yaml is configured (plain Twist, not TwistStamped), same as buggy_description's own launch note.
+
+If you're doing 2D mapping, drive the full loop before saving (ros2 service call /slam_toolbox/serialize_map ...) — anything you don't drive past stays blank in the map.
+
+
+
+
+python3 /home/divagar/buggy_ros2/divagar_test1_ws/src/buggy_uart/scripts/check_uart.py /dev/ttyUSB0 --speed-test --speed-cap 5 --duration 10 --live
+
+
+
+
+New file: real_param_calibration.py — standalone (no ROS needed), registered in setup.py alongside the other UART scripts.
+
+Three tests:
+
+
+# Safe, steering-only (never commands GO) - dry run first
+python3 src/buggy_uart/scripts/real_param_calibration.py /dev/ttyUSB0 --sweep --slew
+
+# Once that looks right, go live (each test asks its own typed confirmation)
+python3 src/buggy_uart/scripts/real_param_calibration.py /dev/ttyUSB0 --sweep --slew --live
+
+# Speed test actually drives the vehicle - separate, more careful confirmation
+python3 src/buggy_uart/scripts/real_param_calibration.py /dev/ttyUSB0 --speed --live
+
+# Run everything and save a machine-readable report
+python3 src/buggy_uart/scripts/real_param_calibration.py /dev/ttyUSB0 \
+  --sweep --slew --speed --live --report-out calibration_result.json
+--sweep: commands a range of angles, reads settled feedback, gives you a commanded-vs-actual table + true saturation point.
+--slew: one abrupt step, times the feedback ramp → real deg/s for max_steering_rate_deg_s.
+--speed: GO at each preset, skips the ramp-up, reports actual steady-state km/h.
+wheelbase is not covered — /odom is dead-reckoned from this same feedback using the wheelbase value you'd be trying to verify, so using it would be circular. Flagged clearly in the summary output; needs an independent ground truth (GPS trace or a paced-out turn radius) if you want that calibrated too.
+Verified: built, syntax-checked, and ran all three modes end-to-end against a simulated buggy over a virtual serial link (a fake actuator with a real 25°/s steering rate and a 2s ramp-delay before speed rises). Confirmed correct output: sweep table accurate to ~1°, slew-rate measured ~24.1 (true value 25, after I fixed an initial measurement bug — first pass excluded the settle-confirmation dwell time and undercounted at 18.8), speed presets correctly separated 2 vs 4 km/h, and the JSON report writes correctly. Not run against real hardware.
+
+Once you run it on the real vehicle, the summary block tells you exactly which numbers to paste into teb_controller.yaml (max_vel_x... no, that one's fine, I mean the steering/speed ones), speed_governor.py, and steering_uart_bridge.py's defaults.
+
+
+
+Added and verified. Command to run:
+
+
+python3 src/buggy_uart/scripts/real_param_calibration.py /dev/ttyUSB0 --live \
+  --sweep --sweep-min -20 --sweep-max 20 --sweep-step 10 --hold-sec 12 --sample-frac 0.75 \
+  --slew --slew-from -15 --slew-to 15 --slew-timeout 15 \
+  --go --go-speed-kmph 2.0 \
+  --report-out calibration_result3.json
+Important — this drives the vehicle the whole time, and steering will keep changing while it drives, so it's not a straight-line path anymore — needs open clear space in every direction the wheels might point during the sweep, not just ahead. --go-speed-kmph 2.0 keeps it at the slower preset deliberately. It gets its own extra confirmation prompt on top of the sweep/slew ones, warning specifically about this.
+
+Compare the resulting sweep table and slew-rate to calibration_result2.json:
+
+If the actual angles now track much closer to commanded (reaching closer to ±20°) and the slew-rate is meaningfully higher than 1.76°/s, that confirms red=1/STOP was limiting steering authority.
+If it looks about the same as the STOP-state run, the resistance is happening regardless of GO/STOP — points elsewhere (worth revisiting).
+Send me the resulting JSON when you've run it.

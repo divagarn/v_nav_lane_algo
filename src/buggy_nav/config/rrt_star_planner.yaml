@@ -1,0 +1,78 @@
+rrt_star_planner:
+  ros__parameters:
+    use_sim_time: true
+
+    # Standard RRT* knobs - see rrt_star_planner_node.py's own docstring for
+    # the algorithm itself. max_iterations/planning_timeout_sec are a race:
+    # whichever limit hits first ends the search (same "time budget OR
+    # iteration budget" idea as SmacPlannerHybrid's max_iterations +
+    # max_planning_time, just because this is a sampling algorithm with no
+    # other natural termination condition).
+    max_iterations: 3000
+    planning_timeout_sec: 2.0
+
+    # 1 (default): single search per goal request, same as always. >1: run
+    # that many independent trials for the same start/goal and keep the
+    # lowest-cost result - RRT* is randomized, so a single run can produce
+    # a noticeably worse path through a tight turn by chance alone.
+    # planning_timeout_sec above is divided across the trials (not
+    # multiplied), so total worst-case latency per goal request stays
+    # about the same regardless of this value - see
+    # rrt_star_planner_node.py's own comment on num_trials for the full
+    # reasoning. Also overridable per-launch (navigate_algo_rrt_star.
+    # launch.py / real_navigate_algo_rrt_star.launch.py).
+    num_trials: 1
+
+    # Fraction of samples drawn exactly at the goal instead of randomly in
+    # the sample region - standard RRT goal-biasing, pulls the tree toward
+    # the goal instead of relying on pure chance to wander there. Too high
+    # defeats the point of random exploration (tree just chases the goal
+    # in a straight line and gives up at the first obstacle); too low
+    # wastes iterations before ever sampling near the goal at all.
+    goal_bias: 0.1
+
+    # Max distance (m) a single tree extension can cover - the "steer"
+    # step. Smaller = finer-grained tree, more iterations needed to cover
+    # the same ground but smoother resulting path; larger = fewer nodes
+    # needed but blockier path and more likely to skip over a narrow gap
+    # entirely if the whole step doesn't fit.
+    step_size: 1.0
+
+    # Radius (m) around a newly added node to search for rewiring - both
+    # "pick the lowest-cost parent among nearby nodes" and "check whether
+    # routing through the new node improves any nearby node's cost" (the
+    # actual "*" in RRT* that plain RRT doesn't do). Larger finds more
+    # rewiring opportunities per step (better asymptotic path quality) at
+    # the cost of more collision checks per iteration.
+    rewire_radius: 2.0
+
+    # How close (m) a sampled/steered point must land to the actual goal
+    # to count as "reached" - same idea as carrot_path_publisher's own
+    # goal_xy_tolerance, just for the planner's internal search rather
+    # than the vehicle's real-world arrival.
+    goal_tolerance: 0.5
+
+    # Weight on a clearance penalty added to each edge's cost (on top of
+    # its raw Euclidean length) - same idea as theta_star_planner_server
+    # .yaml's w_traversal_cost: pure shortest-path RRT* hugs whichever
+    # wall is closer, since a tighter corner is literally shorter. This
+    # penalty (proportional to the SQUARE of the underlying costmap cost
+    # sampled along the edge, same quadratic shape ThetaStarPlanner uses
+    # internally) makes the cost-based rewiring prefer edges that stay
+    # away from both walls - this is what "center navigation" means for
+    # this planner too. Raise this if paths still hug one side in
+    # practice, same tuning direction as the Theta* config's own comment.
+    clearance_weight: 4.0
+
+    # Costmap cost value (0-100 OccupancyGrid scale, NOT the internal
+    # 0-255 nav2_costmap_2d scale) at/above which a cell is treated as
+    # impassable - same threshold carrot_path_publisher.py's own
+    # LETHAL_THRESHOLD uses, kept consistent rather than picking a new
+    # number.
+    lethal_threshold: 90
+
+    # Bounding-box margin (m) added around the straight-line start-goal
+    # span when picking where to draw random samples from - keeps the
+    # search focused on the relevant area instead of wasting samples over
+    # the entire (possibly much larger) saved map.
+    sample_margin: 6.0

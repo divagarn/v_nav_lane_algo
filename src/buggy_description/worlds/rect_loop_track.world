@@ -1,0 +1,170 @@
+<?xml version="1.0" ?>
+<sdf version="1.7">
+  <world name="rect_loop_track">
+    <include>
+      <uri>model://sun</uri>
+    </include>
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <!-- Purpose-built rectangular ring track (not a Building Editor floor
+         plan like closed_loop_track.world/closed_loop_track2.world - those
+         are real building layouts with doorways/rooms that turned out to
+         be narrower in places than this vehicle can physically turn
+         through, which is a track-geometry problem no planner can solve).
+
+         Two concentric rectangles (outer 36x26m, inner island 22x12m)
+         giving a uniform 7m-wide corridor all the way around a single
+         closed loop with four 90deg corners - "rectangle not circle" per
+         request, sized against the real vehicle's kinematics rather than
+         guessed: min_turning_radius is 4.4m (wheelbase 1.6m / tan(20deg),
+         same value used throughout local_nav's configs), vehicle half-width
+         is 1.25m, so a corner needs roughly turning_radius + half_width
+         ~= 5.65m of usable width at minimum to sweep through without
+         clipping the inside wall - 7m leaves a comfortable ~1.3m margin
+         over that floor, on all four corners identically since the loop
+         is uniform. -->
+    <model name="rect_loop_walls">
+      <static>1</static>
+
+      <!-- Outer perimeter (36m x 26m), centered at origin -->
+      <link name="outer_top">
+        <pose>0 13 0 0 0 0</pose>
+        <collision name="collision">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>36 0.15 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>36 0.15 2.5</size></box></geometry>
+        </visual>
+      </link>
+      <link name="outer_bottom">
+        <pose>0 -13 0 0 0 0</pose>
+        <collision name="collision">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>36 0.15 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>36 0.15 2.5</size></box></geometry>
+        </visual>
+      </link>
+      <link name="outer_left">
+        <pose>-18 0 0 0 0 1.5708</pose>
+        <collision name="collision">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>26 0.15 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>26 0.15 2.5</size></box></geometry>
+        </visual>
+      </link>
+      <link name="outer_right">
+        <pose>18 0 0 0 0 1.5708</pose>
+        <collision name="collision">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>26 0.15 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>26 0.15 2.5</size></box></geometry>
+        </visual>
+      </link>
+
+      <!-- Inner island (22m x 12m), centered at origin - corridor is the
+           7m gap between this and the outer perimeter above -->
+      <link name="inner_top">
+        <pose>0 6 0 0 0 0</pose>
+        <collision name="collision">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>22 0.15 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>22 0.15 2.5</size></box></geometry>
+        </visual>
+      </link>
+      <link name="inner_bottom">
+        <pose>0 -6 0 0 0 0</pose>
+        <collision name="collision">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>22 0.15 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>22 0.15 2.5</size></box></geometry>
+        </visual>
+      </link>
+      <link name="inner_left">
+        <pose>-11 0 0 0 0 1.5708</pose>
+        <collision name="collision">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>12 0.15 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>12 0.15 2.5</size></box></geometry>
+        </visual>
+      </link>
+      <link name="inner_right">
+        <pose>11 0 0 0 0 1.5708</pose>
+        <collision name="collision">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>12 0.15 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>12 0.15 2.5</size></box></geometry>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Centerline lane stripe - visual only (no collision, so it never
+         shows up in /non_ground_points or the costmap), purely a ground
+         reference to eyeball whether the vehicle is actually centered.
+         Sits at the exact midpoint between each leg's inner/outer walls:
+         x=+-14.5 ((18+11)/2), y=+-9.5 ((13+6)/2) - only spanning the
+         confirmed straight-corridor region (matching inner island's
+         extent, x in [-11,11] / y in [-6,6]), not the corner turn zones,
+         since there's no single straight centerline through a curve. -->
+    <model name="centerline_markings">
+      <static>1</static>
+      <link name="stripe_south">
+        <pose>0 -9.5 0.01 0 0 0</pose>
+        <visual name="visual">
+          <geometry><box><size>22 0.15 0.005</size></box></geometry>
+          <material><ambient>1 0.9 0.1 1</ambient><diffuse>1 0.9 0.1 1</diffuse></material>
+        </visual>
+      </link>
+      <link name="stripe_north">
+        <pose>0 9.5 0.01 0 0 0</pose>
+        <visual name="visual">
+          <geometry><box><size>22 0.15 0.005</size></box></geometry>
+          <material><ambient>1 0.9 0.1 1</ambient><diffuse>1 0.9 0.1 1</diffuse></material>
+        </visual>
+      </link>
+      <link name="stripe_west">
+        <pose>-14.5 0 0.01 0 0 1.5708</pose>
+        <visual name="visual">
+          <geometry><box><size>12 0.15 0.005</size></box></geometry>
+          <material><ambient>1 0.9 0.1 1</ambient><diffuse>1 0.9 0.1 1</diffuse></material>
+        </visual>
+      </link>
+      <link name="stripe_east">
+        <pose>14.5 0 0.01 0 0 1.5708</pose>
+        <visual name="visual">
+          <geometry><box><size>12 0.15 0.005</size></box></geometry>
+          <material><ambient>1 0.9 0.1 1</ambient><diffuse>1 0.9 0.1 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
+    <physics type="ode">
+      <real_time_update_rate>1000.0</real_time_update_rate>
+      <max_step_size>0.001</max_step_size>
+    </physics>
+  </world>
+</sdf>

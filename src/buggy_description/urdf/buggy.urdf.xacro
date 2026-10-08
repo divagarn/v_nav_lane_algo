@@ -1,0 +1,207 @@
+<?xml version="1.0"?>
+<robot name="buggy" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:include filename="$(find buggy_description)/urdf/materials.xacro"/>
+  <xacro:include filename="$(find buggy_description)/urdf/buggy.gazebo.xacro"/>
+  <xacro:include filename="$(find buggy_description)/urdf/buggy.velodyne.xacro"/>
+
+  <!-- Downward tilt of the LiDAR mount, degrees (positive = nose down).
+       Trades ground-blind-spot distance for upward FOV - see the tradeoff
+       table discussed when this was added. Default 0 = level, matching the
+       ROS1 code's mount spec (roll=pitch=yaw=0). Override at launch time:
+       ros2 launch buggy_description gazebo.launch.py lidar_tilt_deg:=5.0 -->
+  <xacro:arg name="lidar_tilt_deg" default="0.0"/>
+  <xacro:property name="lidar_tilt_deg" value="$(arg lidar_tilt_deg)"/>
+
+  <!-- ============================================================
+       Dimensions measured/derived from the ROS1 stack
+       (catkin_ws/src/ground_segmentation/scripts/obstacle_detector.py,
+        catkin_ws/src/ros_uart_sender/src/steering_calculator_node.py)
+       chassis_length/width are the RAW vehicle footprint (111in x 53in),
+       i.e. WITHOUT the +15in safety buffer those nodes add for obstacle
+       zone calculations.
+       ============================================================ -->
+  <xacro:property name="chassis_length" value="2.8194"/>   <!-- 111 in -->
+  <xacro:property name="chassis_width"  value="1.3462"/>   <!-- 53 in -->
+  <xacro:property name="vehicle_height" value="1.8"/>      <!-- total vehicle height, incl. wheels -->
+  <xacro:property name="wheelbase"      value="1.6"/>
+  <xacro:property name="max_steer_rad"  value="0.349066"/> <!-- 20 deg -->
+
+  <!-- ============================================================
+       Assumed dimensions: NOT present in the ROS1 code (which never
+       modeled the vehicle in 3D). Golf-cart-scale placeholders; adjust
+       once real chassis/wheel measurements are available.
+       ============================================================ -->
+  <xacro:property name="wheel_radius"   value="0.23"/>
+  <xacro:property name="wheel_width"    value="0.18"/>
+  <xacro:property name="track_width"    value="1.10"/>     <!-- left-right wheel center distance -->
+  <xacro:property name="chassis_mass"   value="400.0"/>    <!-- kg, placeholder -->
+  <xacro:property name="wheel_mass"     value="15.0"/>     <!-- kg, placeholder -->
+
+  <!-- Solid body top, absolute height above ground. Deliberately kept below
+       the LiDAR mount (1.00m, see below) - vehicle_height=1.8m is the ROS1
+       code's "estimated total vehicle height" which almost certainly
+       includes an open mast/roof-rack/canopy area above the seating deck
+       where the LiDAR actually sits, not solid chassis. Modeling the whole
+       1.8m as one solid box put the LiDAR's own collision box origin
+       inside the chassis, causing every ray to self-intersect at close
+       range. Placeholder pending real body shape - if the real vehicle
+       *is* solid up past 1.0m, this needs to become a proper multi-part
+       body instead of a single box. -->
+  <xacro:property name="chassis_body_top_abs" value="0.85"/>
+
+  <!-- Derived -->
+  <xacro:property name="chassis_box_height" value="${chassis_body_top_abs - wheel_radius}"/>
+  <xacro:property name="half_wheelbase" value="${wheelbase / 2.0}"/>
+  <xacro:property name="half_track" value="${track_width / 2.0}"/>
+
+  <!-- ============================================================
+       Base / chassis
+       ============================================================ -->
+  <link name="base_footprint"/>
+
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 ${chassis_box_height / 2.0}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_box_height}"/>
+      </geometry>
+      <material name="chassis_grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${chassis_box_height / 2.0}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_box_height}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <origin xyz="0 0 ${chassis_box_height / 2.0}" rpy="0 0 0"/>
+      <mass value="${chassis_mass}"/>
+      <inertia
+        ixx="${(1.0/12.0) * chassis_mass * (chassis_width*chassis_width + chassis_box_height*chassis_box_height)}"
+        iyy="${(1.0/12.0) * chassis_mass * (chassis_length*chassis_length + chassis_box_height*chassis_box_height)}"
+        izz="${(1.0/12.0) * chassis_mass * (chassis_length*chassis_length + chassis_width*chassis_width)}"
+        ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+
+  <!-- ============================================================
+       Wheel macros
+       Wheel cylinder axis is Y (rotated 90 deg about X from default Z).
+       ============================================================ -->
+  <xacro:macro name="wheel_inertial">
+    <inertial>
+      <mass value="${wheel_mass}"/>
+      <inertia
+        ixx="${(1.0/12.0) * wheel_mass * (3*wheel_radius*wheel_radius + wheel_width*wheel_width)}"
+        iyy="${(1.0/2.0) * wheel_mass * wheel_radius*wheel_radius}"
+        izz="${(1.0/12.0) * wheel_mass * (3*wheel_radius*wheel_radius + wheel_width*wheel_width)}"
+        ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="wheel_link" params="name">
+    <link name="${name}_wheel_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+        <material name="wheel_black"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+      </collision>
+      <xacro:wheel_inertial/>
+    </link>
+  </xacro:macro>
+
+  <!-- Rear wheels: drive only, no steering -->
+  <xacro:macro name="rear_wheel" params="name y_offset">
+    <xacro:wheel_link name="${name}"/>
+    <joint name="${name}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child link="${name}_wheel_link"/>
+      <origin xyz="${-half_wheelbase} ${y_offset} 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- Front wheels: steering knuckle (revolute, +/- max_steer_rad) then drive wheel -->
+  <xacro:macro name="front_wheel" params="name y_offset">
+    <link name="${name}_steer_link">
+      <visual>
+        <geometry><sphere radius="0.03"/></geometry>
+        <material name="steer_hub_dark"/>
+      </visual>
+      <inertial>
+        <mass value="1.0"/>
+        <inertia ixx="0.001" iyy="0.001" izz="0.001" ixy="0" ixz="0" iyz="0"/>
+      </inertial>
+    </link>
+    <joint name="${name}_steer_joint" type="revolute">
+      <parent link="base_link"/>
+      <child link="${name}_steer_link"/>
+      <origin xyz="${half_wheelbase} ${y_offset} 0" rpy="0 0 0"/>
+      <axis xyz="0 0 1"/>
+      <limit lower="${-max_steer_rad}" upper="${max_steer_rad}" effort="100" velocity="3.0"/>
+    </joint>
+
+    <xacro:wheel_link name="${name}"/>
+    <joint name="${name}_wheel_joint" type="continuous">
+      <parent link="${name}_steer_link"/>
+      <child link="${name}_wheel_link"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:front_wheel name="front_left"  y_offset="${half_track}"/>
+  <xacro:front_wheel name="front_right" y_offset="${-half_track}"/>
+  <xacro:rear_wheel  name="rear_left"   y_offset="${half_track}"/>
+  <xacro:rear_wheel  name="rear_right"  y_offset="${-half_track}"/>
+
+  <!-- ============================================================
+       Sensor mount frames.
+       lidar_mount_link position comes from the ROS1 code's own authoritative
+       values (obstacle_detector.py's vehicle-viz comment "LiDAR is 173cm
+       from rear axle, 100cm from ground", matching segment_ground.py's
+       LIDAR_HEIGHT=1.00 constant that its ground-plane height filter is
+       tuned around). base_link sits at the wheelbase midpoint and at
+       wheel_radius height, so both measurements are offset accordingly.
+       gps_mount_link/imu_mount_link positions are still placeholders.
+       ============================================================ -->
+  <link name="lidar_mount_link"/>
+  <joint name="lidar_mount_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar_mount_link"/>
+    <origin xyz="${-half_wheelbase + 1.73} 0 ${1.00 - wheel_radius}" rpy="0 ${lidar_tilt_deg * pi / 180.0} 0"/>
+  </joint>
+
+  <link name="gps_mount_link"/>
+  <joint name="gps_mount_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="gps_mount_link"/>
+    <origin xyz="0 0 ${chassis_box_height}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="imu_mount_link"/>
+  <joint name="imu_mount_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_mount_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Included last: references max_steer_rad, which must already be defined above -->
+  <xacro:include filename="$(find buggy_description)/urdf/buggy.ros2_control.xacro"/>
+
+</robot>

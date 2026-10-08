@@ -1,0 +1,68 @@
+{
+	"format_version_major" : 1,
+	"format_version_minor" : 0,
+	"format_version_patch" : 0,
+	"name" : "ComObjectBaseList",
+	"port_id" : 220,
+	"port_version_major" : 1,
+	"port_version_minor" : 0,
+	"port_version_patch" : 0,
+	"port_data_reference":
+	[
+		{
+			"can_message" : "Message_Object_Header0.xml",
+			"can_spec_id" : 0,
+			"can_signals" : [
+							"Internal1"
+							]
+		},
+		{
+			"can_message" : "Message_Object_Header1.xml",
+			"can_spec_id" : 1,
+			"can_signals" : [
+							"Speed",
+							"SpeedQuality",
+							"YawRate",
+							"YawRateQuality",
+							"DynamicSource"
+							]
+		},
+		{
+			"can_message" : "Message_Object_Header2.xml",
+			"can_spec_id" : 2,
+			"can_signals" : [
+							"Internal2"
+							]
+		},
+		{
+			"can_message" : "Message_Object_Control.xml",
+			"can_spec_id" : 3,
+			"can_signals" : [
+							"NoOfObjects",
+							"CycleDuration",
+							"CycleCount"
+							]
+		},
+		{
+			"can_message" : "Message_Object_Data0.xml",
+			"can_spec_id" : 4,
+			"can_signals" : [
+							"XPoint1",
+							"YPoint1",
+							"SpeedAbs",
+							"HeadingDeg",
+							"ObjectLen"
+							]
+		},
+		{
+			"can_message" : "Message_Object_Data1.xml",
+			"can_spec_id" : 5,
+			"can_signals" : [
+							"Quality",
+							"Acceleration",
+							"ZPoint1",
+							"ObjectId"
+							]
+		}
+	]
+}

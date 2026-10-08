@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>buggy_mapping_tools</name>
+  <version>0.1.0</version>
+  <description>save_octomap_node: saves the running octomap_server's map to a correctly-formatted .bt/.ot file via octomap's own AbstractOcTree::write(), since octomap_server's shipped octomap_saver_node CLI tool was found to reject every filename tried on this system.</description>
+  <maintainer email="n.divagar18@gmail.com">divagar</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>octomap_msgs</depend>
+  <depend>octomap</depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

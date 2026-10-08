@@ -1,0 +1,84 @@
+<?xml version="1.0"?>
+<!-- Message Object Data 0 -->
+<message name="$(_messageName)_$(_nameSufix)" _messageName="Object_Data0" _nameSufix="ID0" xmlns:xi="http://www.w3.org/2001/XInclude">
+   <alias_name>Message_$(_messageName)_$(_nameSufix)</alias_name>
+   <base_id>0x500</base_id>
+   <base_id_offset_range start="0x002" end="0x4f"/>
+   <data_format> INTEL </data_format>
+   <object_type> TARGET </object_type>
+   <signal_list>
+      <!-- Signal Object Object Number -->
+      <signal name="ObjectNumber" _id_offset="0x002">
+         <alias_name>Object_Object_Number</alias_name>
+         <use_id_bits>true</use_id_bits>
+         <use_base_id_offset>true</use_base_id_offset>
+         <id_offset>$(_id_offset)</id_offset>
+         <start_byte>0</start_byte>
+         <end_byte>1</end_byte>
+      </signal>
+      <!-- Signal Object Mode Signal -->
+      <signal name="ModeBit" _mode_bit="0">
+         <alias_name>Object_Mode_Signal1</alias_name>
+         <start_byte>0</start_byte>
+         <end_byte>0</end_byte>
+         <start_bit>0</start_bit>
+         <end_bit>1</end_bit>
+         <data_type>SP_MODE</data_type>
+         <const_int>0</const_int>
+      </signal>
+      <!-- Signal Object x Point1 Res 128 -->
+      <signal name="XPoint1">
+         <alias_name>Object_x_Point1</alias_name>
+         <start_byte>0</start_byte>
+         <end_byte>1</end_byte>
+         <start_bit>2</start_bit>
+         <end_bit>6</end_bit>
+         <data_unit>_m</data_unit>
+         <resolution>0.128</resolution>
+         <offset>4096</offset>
+      </signal>
+      <!-- Signal Object y Point1 Res 128 -->
+      <signal name="YPoint1">
+         <alias_name>Object_y_Point1</alias_name>
+         <start_byte>1</start_byte>
+         <end_byte>3</end_byte>
+         <start_bit>7</start_bit>
+         <end_bit>3</end_bit>
+         <data_unit>_m</data_unit>
+         <resolution>0.128</resolution>
+         <offset>4096</offset>
+      </signal>
+      <!-- Signal Object Speed -->
+      <signal name="SpeedAbs">
+         <alias_name>Object_Speed</alias_name>
+         <start_byte>3</start_byte>
+         <end_byte>4</end_byte>
+         <start_bit>4</start_bit>
+         <end_bit>6</end_bit>
+         <data_unit>_m_per_s</data_unit>
+         <resolution>0.1</resolution>
+         <offset>1024</offset>
+      </signal>
+      <!-- Signal Object Heading -->
+      <signal name="HeadingDeg">
+         <alias_name>Heading_deg</alias_name>
+         <start_byte>4</start_byte>
+         <end_byte>6</end_byte>
+         <start_bit>7</start_bit>
+         <end_bit>1</end_bit>
+         <data_unit>_deg</data_unit>
+         <resolution>0.177</resolution>
+         <offset>1024</offset>
+      </signal>
+      <!-- Signal Object Length -->
+      <signal name="ObjectLen">
+         <alias_name>Object_Object_Length</alias_name>
+         <start_byte>6</start_byte>
+         <end_byte>7</end_byte>
+         <start_bit>2</start_bit>
+         <end_bit>0</end_bit>
+         <data_unit>_m</data_unit>
+         <resolution>0.2</resolution>
+      </signal>
+   </signal_list>
+</message>

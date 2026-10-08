@@ -1,0 +1,90 @@
+{
+   "format_version_major" : 1,
+   "format_version_minor" : 0,
+   "format_version_patch" : 0,
+   "name"                 : "auto_interface_rrm",
+   "section"              : 7010,
+   "comment"              : "Automotive user interface parameters",
+   "parameters"           : [
+      {
+         "id"      : 1,
+         "name"    : "center_frequency_idx",
+         "type"    : "u8",
+         "comment" : "Index of center frequency (76125, 76371, 76605, 76845 MHz)",
+         "access"  : "rw",
+         "save"    : true,
+         "min"     : 0,
+         "max"     : 3,
+         "default" : 0
+      },
+      {
+         "id"      : 2,
+         "name"    : "frequency_sweep_idx",
+         "type"    : "u8",
+         "comment" : "Index of sweep (0=LRR, 1=MRR, 2=SRR)",  
+         "access"  : "rw",
+         "save"    : true,
+         "min"     : 0,
+         "max"     : 2,
+         "default" : 0
+      },
+      {
+         "id"      : 10,
+         "name"    : "detection_method",
+         "type"    : "u8",
+         "comment" : "Select detection method (0=Off, 1=Hires)",
+         "access"  : "rw",
+         "save"    : true,
+         "min"     : 0,
+         "max"     : 1,
+         "default" : 1
+      },
+      {
+         "id"     : 202,
+         "name"   : "output_control_target_list_eth",
+         "type"   : "u8",
+         "comment": "Send raw targets via Ethernet, 0 = disabled, 1 = enabled",
+         "access" : "rw",
+         "save"   : true,
+         "min"    : 0,
+         "max"    : 1,
+         "default": 1
+      },
+      {
+         "id"     : 231,
+         "name"   : "ip_source_address",
+         "type"   : "u32",
+         "access" : "rw",
+         "save"   : true,
+         "comment": "IP source address (32bit)",
+         "default": 3232238347
+      },
+      {
+         "id"     : 233,
+         "name"   : "subnet_mask",
+         "type"   : "u32",
+         "access" : "rw",
+         "save"   : true,
+         "comment": "Subnet mask (32bit)",
+         "default": 4294967040
+      },
+      {
+         "id"     : 235,
+         "name"   : "ip_dest_address",
+         "type"   : "u32",
+         "access" : "rw",
+         "save"   : true,
+         "comment": "IP destination address (32bit)",
+         "default": 3232238337
+      },
+      {
+         "id"     : 236,
+         "name"   : "ip_dest_port",
+         "type"   : "u16",
+         "access" : "rw",
+         "save"   : true,
+         "comment": "IP destination port",
+         "default": 55555
+      }
+   ]
+}

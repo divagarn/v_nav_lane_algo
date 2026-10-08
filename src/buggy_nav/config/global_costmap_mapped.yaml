@@ -1,0 +1,98 @@
+# Same global_costmap planner_server uses in local_nav (local_nav/config/
+# planner_costmap.yaml), plus a static_layer reading the saved map's /map
+# topic - this is what actually makes "set a goal anywhere in the closed
+# loop" work: without it, SmacPlannerHybrid can only ever see the live
+# rolling sensor window (~15m), same as the map-free stack, regardless of
+# how good localization is. obstacle_layer/inflation_layer are otherwise
+# unchanged from planner_costmap.yaml - live sensor data still corrects
+# the static map in real time (a door that's since closed, a moved cone,
+# etc).
+#
+# global_frame stays odom (NOT map) deliberately: carrot_path_publisher's
+# math (_clear_distance, _pick_goal_heading, etc.) assumes latest_odom's
+# pose and latest_costmap's cells share one frame, and changing that would
+# mean threading a map<->odom transform through carrot_path_publisher
+# itself - out of scope here. nav2_costmap_2d's StaticLayer works fine
+# under a costmap whose global_frame differs from the static map's own
+# frame, AS LONG AS a valid TF exists between them - AMCL provides exactly
+# that (map -> odom), continuously corrected by particle-filter localization
+# against the saved map (see closed_loop_navigate.launch.py's docstring;
+# this used to be slam_toolbox in localization mode, swapped for AMCL to
+# support placing the vehicle anywhere in the map instead of one fixed
+# known start pose).
+#
+# KNOWN LIMITATION: StaticLayer only looks up the map->odom transform ONCE,
+# when it first receives /map, not continuously - so whatever odom offset
+# AMCL has produced AT THAT MOMENT gets baked into the costmap permanently
+# for the rest of the run, even if AMCL's estimate later improves as more
+# particles converge. closed_loop_navigate.launch.py's localization_settle_time
+# exists specifically to delay planner_server (and therefore this static_layer's
+# first /map subscription) until AMCL has had time to converge - see that
+# launch file's docstring. Bringing this costmap up before convergence
+# finishes will latch onto the wrong offset for good.
+#
+# rolling_window MUST be false here - this is the whole point of this
+# config vs. local_nav's planner_costmap.yaml. A rolling window recenters
+# the entire costmap (including the static_layer's copy of the saved map)
+# on the robot every update, so it only ever exposes a small window around
+# the vehicle - exactly the "live rolling sensor window" limitation this
+# file's own comment above says this config exists to remove. With
+# rolling_window false, nav2_costmap_2d's StaticLayer auto-resizes the
+# whole master costmap to match the incoming /map's real extent once on
+# load, so SmacPlannerHybrid can actually see and plan across the entire
+# saved loop, not just whatever's nearby right now. width/height/resolution
+# below are just pre-/map-load placeholders, overwritten once StaticLayer
+# receives the real map.
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: true
+      update_frequency: 15.0
+      publish_frequency: 15.0
+      global_frame: odom
+      robot_base_frame: base_link
+      rolling_window: false
+      width: 60
+      height: 60
+      resolution: 0.1
+      footprint: "[[1.4150, 1.5147], [1.4508, -1.5276], [-1.3647, -1.4757], [-1.3537, 1.3593]]"
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        enabled: true
+        map_topic: /map
+        subscribe_to_updates: true
+        transform_tolerance: 0.5
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: "non_ground_points radar_targets"
+        non_ground_points:
+          topic: /non_ground_points_filtered
+          data_type: "PointCloud2"
+          sensor_frame: ""
+          marking: true
+          clearing: true
+          min_obstacle_height: -1.0
+          max_obstacle_height: 2.5
+          obstacle_max_range: 15.0
+          obstacle_min_range: 0.0
+          raytrace_max_range: 15.0
+          raytrace_min_range: 0.0
+        radar_targets:
+          topic: /smart_radar/can_targets_0
+          data_type: "PointCloud2"
+          sensor_frame: "umrr"
+          marking: true
+          clearing: true
+          min_obstacle_height: -1.0
+          max_obstacle_height: 2.5
+          obstacle_max_range: 15.0
+          obstacle_min_range: 0.0
+          raytrace_max_range: 15.0
+          raytrace_min_range: 0.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        enabled: true
+        cost_scaling_factor: 3.0
+        inflation_radius: 1.3

@@ -1,0 +1,161 @@
+# Params for costmap_lane_planner_node (single node, plain name - no
+# self-namespacing quirk to worry about here, unlike the Nav2 Costmap2DROS
+# instance this package used to also create).
+#
+# The Nav2 costmap (obstacle_layer + inflation_layer via a standalone
+# Costmap2DROS) was removed entirely: its internal message filter kept
+# dropping every observation ("earlier than all the data in the transform
+# cache") regardless of obstacle topic, mutex use around the shared
+# Costmap2D, or explicit update_frequency/publish_frequency - confirmed
+# live across four separate fix attempts, all ruled out in turn. Occupancy
+# now comes directly from the latest point cloud on obstacle_topic,
+# transformed once per planning cycle into a simple grid-hash - no
+# background thread, no Nav2 internals, no TF message filter to fight.
+
+costmap_lane_planner:
+  ros__parameters:
+    use_sim_time: true
+    fixed_frame: odom
+    base_frame: base_link
+    map_frame: map
+    pose_graph_topic: /slam_toolbox/graph_visualization
+
+    # self_hit_filter's output (self-hits + most ground already removed by
+    # segment_ground's actual RANSAC fit, not just this file's crude
+    # height cutoff) - confirmed live that raw /velodyne_points lets
+    # self-hit points (the vehicle's own chassis/mount) through, and since
+    # those sit essentially AT the vehicle's own position, they fall
+    # squarely inside arcIsClear's very first footprint-corner sample
+    # (~1.8m of the vehicle), reporting every candidate blocked
+    # immediately (STUCK) regardless of the real environment. Safe to use
+    # here unlike the old Nav2 costmap setup: this node has no internal
+    # message filter matching per-message timestamps against a TF cache -
+    # just a plain "latest available" transform lookup - so the earlier
+    # TF-cache-drop issue that setup hit doesn't apply to this code at
+    # all. Points are in this topic's own sensor frame (lidar_mount_link),
+    # not fixed_frame; transformed once per cycle in rebuildObstacleGrid().
+    obstacle_topic: /non_ground_points_filtered
+
+    resolution: 0.3
+    lane_lookahead: 12.0
+    lane_num_candidates: 15
+    corridor_scan_limit: 8.0
+    lane_straight_preference_ratio: 0.85
+    lane_smoothing_alpha: 0.3
+    # MUST match steering_calculator_node's own lookahead_distance param
+    # (default 4.0, run unmodified in the launch commands given for this
+    # pipeline) - this value feeds the forward calculation that turns a
+    # chosen curvature into a published lateral offset, and
+    # steering_calculator_node's pure-pursuit independently inverts that
+    # offset back into a steering angle assuming ITS OWN lookahead value.
+    # Confirmed live + numerically: a mismatch here (was 6.0 against the
+    # other node's 4.0) makes the ACTUAL commanded steering angle roughly
+    # 2x sharper than the curvature the arc planner verified safe - the
+    # vehicle cuts corners far tighter than anything the safety check
+    # looked at, regardless of how correct the obstacle checking itself
+    # is. The original Python pipeline avoided this by tying both nodes
+    # to one shared launch argument - if you ever run
+    # steering_calculator_node with a non-default lookahead_distance,
+    # update this to match it exactly.
+    steering_lookahead_distance: 4.0
+    vehicle_half_width: 1.0
+    # The arc planner checks the front/rear corners at this distance from
+    # the reference point during a turn, not just width at the reference
+    # point alone - see arcIsClear()'s own comment for why (vehicle
+    # off-tracking: front/rear swing to a different lateral offset than
+    # the reference point mid-turn).
+    vehicle_half_length: 1.8
+    vehicle_footprint_margin: 0.3
+
+    # Height filter, in the SENSOR's own frame (confirmed live by direct
+    # measurement: the LiDAR sits ~1m above ground, so the ground plane
+    # itself clusters around Z=-1.0, not Z=0) - excludes the ground plane
+    # by a plain height cutoff instead of segment_ground's actual RANSAC
+    # plane fit. Narrower band than segment_ground would use; some very
+    # low obstacles near ground level may be missed as a result - a
+    # deliberate simplicity/robustness tradeoff, not an oversight.
+    min_obstacle_height: -0.6
+    max_obstacle_height: 2.0
+    # Radius around each raw obstacle point that counts as "occupied" -
+    # stands in for the point's own physical size/the sensor's angular
+    # resolution at range, not the vehicle's safety margin (that's
+    # vehicle_footprint_margin above, applied separately).
+    obstacle_inflation_radius: 0.30
+    # Extra buffer on top of obstacle_inflation_radius above, applied to
+    # BOTH the real isBlockedWorld() check and the /obstacle_area marker's
+    # drawn size (always kept equal - what's shown is what's enforced).
+    # Genuinely widens the real blocking distance, not just the picture -
+    # real extra margin against the residual steering/dynamics imprecision
+    # already observed to cause collisions this session even with correct
+    # footprint checks and matched lookahead distances. Raise this first
+    # if the vehicle is still cutting things closer than feels safe;
+    # raise obstacle_inflation_radius instead only if the raw point size
+    # itself needs adjusting.
+    obstacle_safety_margin: 0.5
+    # Only points within this radius of the vehicle's CURRENT position get
+    # indexed each cycle - scopes occupancy checking to a bounded area
+    # around where the vehicle actually is/is heading, not the whole
+    # cloud, matching the explicit request to focus on the relevant
+    # forward area rather than a persistent full-map costmap. Must be
+    # comfortably larger than lane_lookahead + vehicle_half_length +
+    # corridor_scan_limit so nothing relevant gets excluded.
+    obstacle_search_radius: 25.0
+
+    wheelbase: 1.6
+    max_steering_deg: 20.0
+    publish_rate: 10.0
+
+    # Strong-but-not-absolute pose-graph direction bias - see
+    # directionAndReferenceBonus()'s own comment for the exact formula.
+    # Typical centering_error values are a few meters at most
+    # (corridor_scan_limit-bounded); this gain makes route alignment
+    # dominate candidate selection in practice without ever hard-filtering
+    # an arc purely for direction disagreement.
+    direction_reference_gain: 6.0
+
+    enable_pose_graph_bias: true
+    turn_lookahead_m: 9.0
+    route_preview_distance_m: 40.0
+    nearest_vertex_max_dist: 5.0
+    snap_deg: 25.0
+    direction_disambiguation_vertices: 5
+    pose_graph_stabilize_count: 2
+    pose_graph_history_depth: 3
+    pose_graph_reset_streak_threshold: 3
+    route_preview_max_jump_m: 3.0
+    route_preview_cache_timeout_sec: 999999.0
+    turn_signal_timeout_sec: 2.0
+    # Confirmed live on my_map2: vertex 0 and the last vertex are only
+    # 1.1m apart in real space (a closed-loop track) despite being at
+    # opposite ends of the recorded vertex array. The route-preview/turn-
+    # direction walk now continues across that seam instead of stopping
+    # dead at the array boundary, as long as the gap it's bridging is
+    # within this distance - needed for the vehicle to start anywhere on
+    # the loop, in either direction, without the recorded route's own
+    # start/end point acting as an artificial dead end. Keep below the
+    # shortest real gap you'd expect between genuinely separate track
+    # segments so an actually-open track is never bridged by mistake.
+    loop_closure_max_gap_m: 2.0
+
+    # Set true to stop the vehicle once it returns to wherever the
+    # pose-graph route was when 'g' was pressed in manual_pose_aligner
+    # (captured fresh on every navigation_enabled rising edge, so it
+    # follows wherever the operator actually starts - NOT a fixed map
+    # location). Set false to keep navigating the loop indefinitely
+    # instead of ever stopping there. steering_calculator_node holds the
+    # vehicle stopped (zero speed/steering) once /lap_complete goes true,
+    # the same way it already does for navigation_enabled=false.
+    start_stop_origin: false
+    # How close (in meters) counts as "back at the start" once the vehicle
+    # has left it - keep this at least a couple of resolution_ cells above
+    # normal steering wander so a momentary swerve near the origin mid-lap
+    # never falsely triggers it (that's why has_left_origin_/
+    # origin_min_travel_m_ exists at all - see origin_min_travel_m below).
+    origin_stop_radius_m: 1.5
+    # The vehicle must travel at least this far from the captured start
+    # point before "back within origin_stop_radius_m" is even checked -
+    # otherwise the very first planning cycle after pressing 'g' (still
+    # sitting right on the start point) would immediately read as "lap
+    # complete". Keep well below the actual loop length so a real lap is
+    # always detected.
+    origin_min_travel_m: 10.0

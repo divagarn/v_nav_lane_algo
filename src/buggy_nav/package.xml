@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>buggy_nav</name>
+  <version>0.1.0</version>
+  <description>Navigation-algo layer: controller_server (TEB) + planner_server (ThetaStarPlanner) + carrot_path_publisher (centerline-biased local path planner front-end). Assumes buggy_mapping's localize.launch.py is already running (perception + localization + /map).</description>
+  <maintainer email="n.divagar18@gmail.com">divagar</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>nav2_costmap_2d</depend>
+  <depend>nav2_controller</depend>
+  <depend>teb_local_planner</depend>
+  <depend>costmap_converter</depend>
+  <depend>nav2_planner</depend>
+  <depend>nav2_theta_star_planner</depend>
+  <depend>nav2_msgs</depend>
+  <depend>action_msgs</depend>
+  <depend>nav2_lifecycle_manager</depend>
+  <depend>visualization_msgs</depend>
+
+  <exec_depend>python3-scipy</exec_depend>
+  <exec_depend>python3-skimage</exec_depend>
+  <exec_depend>python3-networkx</exec_depend>
+  <!-- Real-hardware actuation path only (real_navigate_algo_*.launch.py) -->
+  <exec_depend>buggy_perception</exec_depend>
+  <exec_depend>buggy_uart</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

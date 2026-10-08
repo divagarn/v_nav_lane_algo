@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<!-- Message Object Header 1 -->
+<message name="$(_messageName)_$(_nameSufix)" _messageName="Object_Header1" _base_id_offset="0x000" xmlns:xi="http://www.w3.org/2001/XInclude">
+   <alias_name>Message_$(_messageName)_$(_nameSufix)</alias_name>
+   <base_id>0x500</base_id>
+   <base_id_offset int="0x000"/>
+   <data_format> INTEL </data_format>
+   <object_type> CONTROL </object_type>
+   <signal_list>
+      <!-- Signal Mode Signal -->
+      <signal name="ModeBit" _mode_bit="2">
+         <alias_name>Object_Mode_Signal1</alias_name>
+         <start_byte>0</start_byte>
+         <end_byte>0</end_byte>
+         <start_bit>0</start_bit>
+         <end_bit>1</end_bit>
+         <data_type>SP_MODE</data_type>
+         <const_int>2</const_int>
+      </signal>
+      <signal name="Internal2">
+         <alias_name>Object_Reserved</alias_name>
+         <start_byte>0</start_byte>
+         <end_byte>7</end_byte>
+         <start_bit>2</start_bit>
+         <end_bit>7</end_bit>
+      </signal>
+   </signal_list>
+</message>

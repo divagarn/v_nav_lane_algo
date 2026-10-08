@@ -1,0 +1,66 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Real Velodyne Puck Hi-Res spec, matched as closely as Gazebo Classic's
+       ray sensor allows: 16 channels, +/-10 deg vertical FOV (16 samples
+       across that range gives the real unit's 1.33 deg per-channel
+       spacing - narrower/denser than the standard Puck/VLP-16's +/-15 deg,
+       2 deg spacing), 360 deg horizontal, 10 Hz rotation, 1-100m range.
+       Publishes PointCloud2 on /velodyne_points to match the topic
+       ground_segmentation's ported nodes subscribe to.
+
+       Horizontal samples reduced from the real unit's ~0.2 deg azimuth
+       resolution (1800/rev) to 600/rev (~0.6 deg) - Gazebo Classic's ray
+       sensor is CPU raycasting, single-threaded, and 1800x16=28800 rays/
+       scan at 15Hz (~432k rays/sec) was enough on its own to peg one core
+       at 100% and drop real-time factor well below 1.0 regardless of how
+       many other cores were free (gpu_ray isn't an option here - it only
+       supports a single vertical ray in this Gazebo Classic version, so
+       multi-channel scanning is stuck on the CPU "ray" type either way).
+       600/rev is still dense enough for wall-following/obstacle detection
+       at these speeds; bump back toward 1800 if testing needs finer
+       angular resolution and CPU headroom allows it.
+
+       Note: the narrower +/-10 deg FOV means the ground blind spot right
+       around the vehicle is actually LARGER than the standard Puck would
+       give at this same 1.00m mount height (~5.67m vs ~3.73m, since the
+       steepest ray is now -10 deg instead of -15 deg) - Hi-Res trades
+       near-field ground coverage for denser angular resolution further
+       out. Worth knowing if near-field coverage matters for this vehicle. -->
+  <gazebo reference="lidar_mount_link">
+    <sensor name="velodyne_sensor" type="ray">
+      <pose>0 0 0 0 0 0</pose>
+      <visualize>false</visualize>
+      <update_rate>15</update_rate>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>600</samples>
+            <resolution>1.0</resolution>
+            <min_angle>-3.14159265</min_angle>
+            <max_angle>3.14159265</max_angle>
+          </horizontal>
+          <vertical>
+            <samples>16</samples>
+            <resolution>1.0</resolution>
+            <min_angle>-0.174533</min_angle>
+            <max_angle>0.174533</max_angle>
+          </vertical>
+        </scan>
+        <range>
+          <min>1.0</min>
+          <max>100.0</max>
+          <resolution>0.002</resolution>
+        </range>
+      </ray>
+      <plugin name="velodyne_points" filename="libgazebo_ros_ray_sensor.so">
+        <ros>
+          <remapping>~/out:=/velodyne_points</remapping>
+        </ros>
+        <output_type>sensor_msgs/PointCloud2</output_type>
+        <frame_name>lidar_mount_link</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+</robot>

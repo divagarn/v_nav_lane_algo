@@ -1,0 +1,101 @@
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: true
+      update_frequency: 15.0
+      publish_frequency: 15.0
+      global_frame: odom
+      robot_base_frame: base_link
+      rolling_window: true
+      # Square, not the old 40x20: this window rolls in the odom (global)
+      # frame, not robot-relative, so an asymmetric window gives visibility
+      # that varies with the vehicle's current heading - as little as
+      # +-10m (the old height/2) depending on which way a given corner
+      # happens to face in odom coordinates. Confirmed live: the vehicle
+      # drove itself into an inside corner with no >=4.4m-radius Dubin path
+      # left to reach a large opening it should have caught much earlier -
+      # SmacPlannerHybrid returned "no valid path found" for minutes
+      # straight. 40x40 (raised from 30x30) gives a uniform +-20m in every
+      # direction regardless of heading, room for carrot_path_publisher's
+      # scan_distance/carrot_distance/use_reactive_chain to be raised
+      # further - _pick_goal_heading's raycasts just treat "ran off the
+      # known costmap window" as their limit, so those params can never
+      # usefully exceed what this window (and obstacle_max_range/
+      # raytrace_max_range below) actually covers. update_frequency (15Hz)
+      # unchanged - cells scale as (width/resolution)^2, so this is real
+      # extra CPU cost per update on an already CPU-constrained machine
+      # (same machine teb_controller.yaml's controller_frequency comment
+      # describes) - watch actual costmap update rate after raising this
+      # further, don't just keep increasing blindly.
+      width: 40
+      height: 40
+      resolution: 0.1
+      # Actual chassis footprint (buggy_description: 2.8194m x 1.3462m),
+      # not a crude circular approximation - matters for inflation accuracy
+      # given this vehicle is long and narrow, not round.
+      footprint: "[[1.4150, 1.5147], [1.4508, -1.5276], [-1.3647, -1.4757], [-1.3537, 1.3593]]"
+      plugins: ["obstacle_layer", "inflation_layer"]
+
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        # /non_ground_points_filtered (not /detected_obstacles, and not raw
+        # /non_ground_points): the costmap should reflect everything that
+        # isn't ground, not just clusters that passed obstacle_detector's
+        # size/classification filters - a flat wall spanning the whole view
+        # is exactly the case that matters most here. The "_filtered" topic
+        # is /non_ground_points with vehicle self-hit points (chassis/hood
+        # LiDAR returns, a Gazebo-only artifact) removed by self_hit_filter -
+        # without it, the self-hit blob overlaps the robot's own footprint
+        # and every MPPI rollout starts already "in collision".
+        # radar_targets: UMRR-A4 Type 171 Automotive radar (real driver:
+        # smartmicro_ros2_radars/umrr_ros2_driver; in Gazebo, radar_sim.py
+        # stands in for it since Gazebo Classic has no native mmWave radar
+        # plugin - see that file's docstring). Second, independent
+        # obstacle source alongside the LiDAR - narrower FOV and it only
+        # ever republishes what the LiDAR already derived in sim, so this
+        # is redundancy/fusion-path testing here, not new sensor coverage.
+        observation_sources: "non_ground_points radar_targets"
+        non_ground_points:
+          topic: /non_ground_points_filtered
+          data_type: "PointCloud2"
+          sensor_frame: ""
+          marking: true
+          clearing: true
+          min_obstacle_height: -1.0
+          max_obstacle_height: 1.0
+          obstacle_max_range: 22.0
+          obstacle_min_range: 0.0
+          raytrace_max_range: 22.0
+          raytrace_min_range: 0.0
+        radar_targets:
+          topic: /smart_radar/can_targets_0
+          data_type: "PointCloud2"
+          sensor_frame: "umrr"
+          marking: true
+          clearing: true
+          min_obstacle_height: -1.0
+          max_obstacle_height: 1.0
+          # Capped to match non_ground_points/the 40x40 costmap window,
+          # even though radar_sim.py's own FOV filter already limits to
+          # 60m - keeps both sources bounded consistently at the
+          # costmap-config level too, not just upstream in the publisher.
+          obstacle_max_range: 22.0
+          obstacle_min_range: 0.0
+          raytrace_max_range: 22.0
+          raytrace_min_range: 0.0
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        enabled: true
+        # Measured corridor width on this track is ~3.2m. inflation_radius
+        # needs to be roughly half that (or more) so both walls' cost
+        # gradients overlap in the middle - otherwise there's a flat,
+        # zero-cost dead zone across the whole corridor center with no
+        # gradient at all, and NavFn's shortest path has no reason to
+        # prefer the centerline over hugging one wall (confirmed: measured
+        # 2.3m clearance on one side vs 0.9m on the other at inflation_radius
+        # 0.75). 1.6m makes the two gradients meet in the middle, biasing
+        # the least-cost path toward the centerline.
+        cost_scaling_factor: 3.0
+        inflation_radius: 1.3

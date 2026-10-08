@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Gazebo Classic ignores URDF <material><color>; needs its own tags -->
+  <gazebo reference="base_link">
+    <material>Gazebo/Grey</material>
+  </gazebo>
+
+  <xacro:macro name="gazebo_wheel_material" params="name">
+    <gazebo reference="${name}_wheel_link">
+      <material>Gazebo/Black</material>
+      <mu1>1.0</mu1>
+      <mu2>1.0</mu2>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:gazebo_wheel_material name="front_left"/>
+  <xacro:gazebo_wheel_material name="front_right"/>
+  <xacro:gazebo_wheel_material name="rear_left"/>
+  <xacro:gazebo_wheel_material name="rear_right"/>
+
+</robot>

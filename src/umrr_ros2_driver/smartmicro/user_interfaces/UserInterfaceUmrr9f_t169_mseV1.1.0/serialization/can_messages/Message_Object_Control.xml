@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<!-- Message Object Control -->
+<message name="$(_messageName)_$(_nameSufix)" _messageName="Object_Control" _base_id_offset="0x001" xmlns:xi="http://www.w3.org/2001/XInclude">
+   <alias_name>Message_$(_messageName)_$(_nameSufix)</alias_name>
+   <base_id>0x500</base_id>
+   <base_id_offset int="0x001"/>
+   <data_format> INTEL </data_format>
+   <object_type> CONTROL </object_type>
+   <signal_list>
+      <!-- Signal Object Number of Objects -->
+      <signal name="NoOfObjects">
+         <alias_name>Object_Number_Of_Objects</alias_name>
+         <start_byte>0</start_byte>
+         <end_byte>0</end_byte>
+      </signal>
+      <!-- Signal Object Cycle Duration -->
+      <signal name="CycleDuration">
+         <alias_name>Object_Cycle_Duration</alias_name>
+         <start_byte>2</start_byte>
+         <end_byte>2</end_byte>
+         <data_unit>_s</data_unit>
+         <resolution>0.001</resolution>
+      </signal>
+      <!-- Signal Object Cycle Counter -->
+      <signal name="CycleCount">
+         <alias_name>Object_Cycle_Count</alias_name>
+         <start_byte>4</start_byte>
+         <end_byte>7</end_byte>
+      </signal>
+   </signal_list>
+</message>

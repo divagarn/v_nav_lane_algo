@@ -1,0 +1,26 @@
+/smart_radar:
+  ros__parameters:
+    adapters:
+      master_data_serial_type: "can_based"
+      master_inst_serial_type: "can_based"
+      adapter_0:
+        hw_type: "can"
+        hw_dev_id: 2
+        hw_iface_name: "can0"
+        baudrate: 500000
+
+    sensors:
+      sensor_0:
+        link_type: "can"
+        pub_type: "target"                  # target for standard FW
+        history_size: 10
+        inst_type: "can_based"
+        data_type: "can_based"
+        model: "umrra4_can_v1_2_1"           # ✅ UMRR-171 Target FW model
+        id: 700                              # Unique ID for the sensor
+        dev_id: 2                            # Must match adapter_0.hw_dev_id
+        uifname: "umrra4_automotive"         # ✅ UMRR-171 target interface
+        uifmajorv: 1
+        uifminorv: 2
+        uifpatchv: 1                         # Check with Smart Access Tool
+        frame_id: "umrr"

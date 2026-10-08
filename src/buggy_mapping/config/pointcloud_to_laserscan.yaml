@@ -1,0 +1,26 @@
+# Flattens /non_ground_points_filtered (already ground-removed by
+# segment_ground + self_hit_filter - feeding SLAM a raw, ground-included
+# cloud would put a ring of "obstacle" cells around the vehicle every
+# cycle and corrupt the map) into a 2D sensor_msgs/LaserScan on /scan for
+# slam_toolbox, which only consumes 2D scans, not point clouds.
+#
+# No target_frame set - the published LaserScan just keeps the input
+# cloud's own frame_id (velodyne, or whatever segment_ground stamped it
+# as), and slam_toolbox looks up that frame -> base_frame via TF itself
+# (already provided by the vehicle's static velodyne mount transform) -
+# cheaper than pointcloud_to_laserscan doing its own extra TF transform
+# for the same result.
+pointcloud_to_laserscan:
+  ros__parameters:
+    transform_tolerance: 0.3
+    min_height: -1.0
+    max_height: 1.0
+    angle_min: -3.14159265
+    angle_max: 3.14159265
+    angle_increment: 0.0087
+    scan_time: 0.1
+    range_min: 0.3
+    range_max: 20.0
+    use_inf: true
+    inf_epsilon: 1.0
+    concurrency_level: 1

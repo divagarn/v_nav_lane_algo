@@ -1,0 +1,4 @@
+2026-10-08 12:16:41,754 - INFO - UartInterface: loopback=True - every message will be built and logged, the real serial port will NOT be opened or written to.
+2026-10-08 12:16:41,754 - INFO - Message packet (hex): 2801010dac29
+2026-10-08 12:16:41,754 - INFO - Message packet (ascii): (\x01\x01\x0d\xac)
+2026-10-08 12:16:41,754 - INFO - Loopback=True - not writing to the real serial port.

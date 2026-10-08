@@ -1,0 +1,154 @@
+controller_server:
+  ros__parameters:
+    use_sim_time: true
+    odom_topic: /odom
+    # Lower than DWB's 10.0 (matches the teb_local_planner package's own
+    # shipped reference config) - full trajectory optimization each cycle
+    # is more expensive than DWB's forward-simulate-and-score approach,
+    # and this machine is already CPU-constrained (segment_ground alone
+    # runs single-core at ~1Hz under load).
+    controller_frequency: 10.0
+    controller_plugins: ["FollowPath"]
+
+    FollowPath:
+      plugin: "teb_local_planner::TebLocalPlannerROS"
+
+      # Trajectory
+      teb_autosize: 1.0
+      dt_ref: 0.3
+      dt_hysteresis: 0.1
+      max_samples: 800
+      global_plan_overwrite_orientation: false
+      # Discourage backward motion: steering_uart_bridge.py currently treats
+      # any commanded vx below min_forward_speed as final_red_detected=True
+      # (STOP) - a real reverse command would be misread as a stop, not
+      # reverse, and we've never validated reverse motion on the real
+      # vehicle anyway. max_vel_x_backwards: 0.0 (an earlier attempt at a
+      # hard disable) is NOT safe - TEB logs it as undefined behavior at
+      # startup, since the optimizer bound (max_vel_x_backwards -
+      # penalty_epsilon) goes negative whenever max_vel_x_backwards <=
+      # penalty_epsilon (0.1). 0.12 stays safely above penalty_epsilon
+      # (same reasoning as the upstream default of 0.2, just closer to the
+      # floor - the real "no reverse" enforcement is upstream of TEB
+      # anyway, in carrot_path_publisher's forward-cone restriction on
+      # which headings _pick_goal_heading is even allowed to pick; this is
+      # only the backstop for whatever tiny residual TEB might still try
+      # on its own). Note weight_kinematics_forward_drive below has NO
+      # effect here - it's only read by AddEdgesKinematicsDiffDrive(); this
+      # config's nonzero min_turning_radius + weight_kinematics_turning_radius
+      # makes TEB pick AddEdgesKinematicsCarlike() instead (see
+      # optimal_planner.cpp), which has no forward-preference term - the
+      # cap itself (vs. max_vel_x forward) is what keeps backward motion rare.
+      allow_init_with_backwards_motion: false
+      max_global_plan_lookahead_dist: 9.0
+      global_plan_viapoint_sep: 0.5
+      global_plan_prune_distance: 1.0
+      exact_arc_length: false
+      feasibility_check_no_poses: 5
+      publish_feedback: false
+
+      # Robot - same envelope as dwb_controller.yaml/mppi_controller.yaml:
+      # vx_max 2.2 m/s (8 km/h normal speed), max_vel_theta derived from
+      # the real min turning radius (wheelbase / tan(max_steering_angle) =
+      # 1.6 / tan(20deg) = 4.4m, same value verified from MPPI's
+      # AckermannConstraints.min_turning_r source). Unlike DWB/MPPI, which
+      # only cap wz and can still imply an unrealistic steering angle at
+      # low speed (curvature = wz/vx blows up as vx -> 0 - the whole
+      # reason those configs needed a vx_min epsilon workaround), TEB's
+      # optimizer enforces min_turning_radius as a real kinematic
+      # constraint on the entire trajectory, not a per-sample ratio - no
+      # equivalent division-by-zero case exists here.
+      max_vel_x: 2.5
+      max_vel_x_backwards: 0.0
+      max_vel_theta: 0.5
+      acc_lim_x: 0.5
+      acc_lim_theta: 1.0
+      min_turning_radius: 4.4
+      wheelbase: 1.6
+      # false: keep standard Twist (linear.x, angular.z) output, same as
+      # DWB - steering_uart_bridge.py's atan2(-angular_z*wheelbase, vx)
+      # conversion already handles this correctly and doesn't need to
+      # change. (true would make TEB publish angular.z as a steering
+      # angle directly instead, which is a real, arguably cleaner option
+      # for a future revisit, but changes what downstream expects.)
+      cmd_angle_instead_rotvel: false
+
+      # Real chassis footprint (polygon, not circular - matters for a
+      # long/narrow vehicle) - identical string to local_costmap.yaml's
+      # footprint parameter, parsed by the same
+      # nav2_costmap_2d::makeFootprintFromString().
+      footprint_model:
+        type: "polygon"
+        vertices: "[[1.4150, 1.5147], [1.4508, -1.5276], [-1.3647, -1.4757], [-1.3537, 1.3593]]"
+
+      # GoalTolerance
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.3
+      free_goal_vel: false
+
+      # Obstacles
+      min_obstacle_dist: 0.3
+      inflation_dist: 1.0
+      include_costmap_obstacles: true
+      costmap_obstacles_behind_robot_dist: 1.0
+      obstacle_poses_affected: 15
+
+      dynamic_obstacle_inflation_dist: 0.6
+      # Our obstacles (track walls) are static - skip the dynamic-obstacle
+      # tracking overhead costmap_converter would otherwise do.
+      include_dynamic_obstacles: false
+
+      # false, not true: costmap_converter::CostmapToPolygonsDBSMCCH's
+      # destructor segfaults joining its own spin thread (confirmed via
+      # apport crash report + gdb backtrace - controller_server crashed
+      # 43 times in one day on real hardware, every time on shutdown/
+      # cleanup: SIGTERM -> ControllerServer::on_cleanup -> TEB plugin
+      # destructor -> CostmapToPolygonsDBSMCCH::~CostmapToPolygonsDBSMCCH
+      # -> std::thread::join() -> SIGSEGV in __pthread_clockjoin_ex). No
+      # separate thread means nothing for that destructor to mishandle.
+      # Trade-off: costmap conversion now runs inline on controller_server's
+      # own update cycle instead of its own thread - some CPU cost, but
+      # this machine already runs everything else inline too.
+      costmap_converter_plugin: "costmap_converter::CostmapToPolygonsDBSMCCH"
+      costmap_converter_spin_thread: false
+      costmap_converter_rate: 5
+
+      # Optimization
+      no_inner_iterations: 5
+      no_outer_iterations: 4
+      optimization_activate: true
+      optimization_verbose: false
+      penalty_epsilon: 0.1
+      obstacle_cost_exponent: 4.0
+      weight_max_vel_x: 0.5
+      weight_max_vel_theta: 0.5
+      weight_acc_lim_x: 0.5
+      weight_acc_lim_theta: 10.5
+      weight_kinematics_nh: 1000.0
+      weight_kinematics_forward_drive: 3.0  # unused: only applies to diffdrive edge, see note on allow_init_with_backwards_motion above
+      weight_kinematics_turning_radius: 1.0
+      weight_optimaltime: 1.0
+      weight_shortest_path: 0.0
+      weight_obstacle: 100.0
+      weight_inflation: 0.2
+      weight_dynamic_obstacle: 10.0
+      weight_dynamic_obstacle_inflation: 0.2
+      weight_viapoint: 50.0
+      weight_adapt_factor: 2.0
+
+      # Homotopy Class Planner - disabled: our track is a single narrow
+      # corridor, so exploring multiple alternative topologies (pass an
+      # obstacle on the left vs right) mostly adds compute cost without
+      # changing the outcome, and it's the heaviest/most experimental part
+      # of TEB. Can revisit if a real need for it shows up.
+      enable_homotopy_class_planning: false
+      enable_multithreading: true
+
+      # Recovery
+      shrink_horizon_backup: true
+      shrink_horizon_min_duration: 10.0
+      oscillation_recovery: true
+      oscillation_v_eps: 0.1
+      oscillation_omega_eps: 0.1
+      oscillation_recovery_min_duration: 10.0
+      oscillation_filter_duration: 10.0

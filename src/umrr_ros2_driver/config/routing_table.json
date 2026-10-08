@@ -1,0 +1,20 @@
+{
+    "clients": [
+        {
+            "can_network_id": 0,
+            "client_id": 700,
+            "data_serialization_type": "can_based",
+            "dev_id": 2,
+            "instruction_serialization_type": "can_based",
+            "ip": "",
+            "link_type": "can",
+            "port": 0,
+            "user_interface_major_v": 1,
+            "user_interface_minor_v": 2,
+            "user_interface_name": "umrra4_automotive",
+            "user_interface_patch_v": 1
+        }
+    ],
+    "name": "Client Routing Table",
+    "version": "1.0.0"
+}

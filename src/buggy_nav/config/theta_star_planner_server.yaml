@@ -1,0 +1,54 @@
+planner_server:
+  ros__parameters:
+    use_sim_time: true
+    expected_planner_frequency: 1.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_theta_star_planner/ThetaStarPlanner"
+
+      # Unlike SmacPlannerHybrid (smac_planner_server.yaml), Theta* is a
+      # plain any-angle grid search with NO Ackermann kinematics - no
+      # minimum_turning_radius, no motion-primitive state space, nothing
+      # stopping it from returning a corner sharper than this vehicle can
+      # actually steer (4.4m real turning radius). That's fine here because
+      # TEB (teb_controller.yaml) is what actually executes the path, and
+      # its own min_turning_radius: 4.4 is enforced as a hard kinematic
+      # constraint on the whole optimized trajectory (see that file's own
+      # comment) - Theta*'s output is only ever a via-point reference
+      # (weight_viapoint) TEB bends toward, not something it's obligated to
+      # reproduce exactly. Confirmed by parameter probe against the actual
+      # installed nav2_theta_star_planner (Humble, 1.1.20): these five are
+      # the plugin's complete declared parameter set - it does NOT expose
+      # tolerance/max_planning_time/max_iterations the way
+      # NavfnPlanner/SmacPlannerHybrid do.
+
+      # Rolling window costmap has no static map behind it (same reasoning
+      # as planner_server.yaml/smac_planner_server.yaml's allow_unknown) -
+      # most of the window outside current LiDAR range is unknown (-1).
+      allow_unknown: true
+
+      # 8-connected search (vs 4) - lets the path cut diagonally instead of
+      # only axis-aligned steps, which matters a lot for a centered path
+      # through a corridor that isn't grid-aligned with the costmap.
+      how_many_corners: 8
+
+      # Relative weighting of the line-of-sight/edge cost terms Theta* sums
+      # while building the path:
+      #   w_euc_cost: straight-line distance between connected nodes -
+      #     baseline "shorter is better" pull.
+      #   w_traversal_cost: costmap cost (proximity to inflated/lethal
+      #     cells) along that edge, scaled quadratically in the plugin
+      #     itself - raising this relative to w_euc_cost is what actually
+      #     pulls the path toward the corridor's center (away from the
+      #     inflation gradient near both walls) rather than the geometric
+      #     shortest line, which is what "center navigation" here means.
+      #     2.0 (double the default euclidean weight) - start here and
+      #     raise further if the path still hugs one wall in practice.
+      w_euc_cost: 1.0
+      w_traversal_cost: 4.0
+
+      # False: goal orientation from carrot_path_publisher's picked heading
+      # is already meaningful (see that file's _pick_goal_heading) - true
+      # would override it with the final approach direction instead, which
+      # SmacPlannerHybrid's config doesn't do either.
+      use_final_approach_orientation: false

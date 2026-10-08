@@ -1,0 +1,42 @@
+<?xml version="1.0" ?>
+<sdf version="1.7">
+  <world name="office_track">
+    <include>
+      <uri>model://sun</uri>
+    </include>
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <!-- Traced in Gazebo's Building Editor from the occupancy grid saved off
+         my_ma1's slam_toolbox pose graph, saved at
+         /home/divagar/building_editor_models/office_track1 and copied into
+         this package's models/ dir (see buggy_description/models/office_track1)
+         so it's version-controlled instead of only living in the home dir. -->
+    <!-- Building Editor centers a traced floorplan on its own local origin
+         (the imported image's pixel-center), not on the .pgm's bottom-left
+         corner that map_saver's origin field describes. Offset here is that
+         image-center point expressed in the my_map2_map.yaml map frame:
+         origin[-67.9,-99.7] + (width_px,height_px)*resolution/2
+         = (-67.9 + 2313*0.05/2, -99.7 + 2129*0.05/2) = (-10.075, -46.475).
+         This lines the walls up with map frame (0,0,0), which is where the
+         robot spawns (confirmed against my_map2.posegraph's first vertex). -->
+    <include>
+      <uri>model://office_track1</uri>
+      <name>office_track_walls</name>
+      <pose>-10.075 -46.475 0 0 0 0</pose>
+    </include>
+
+    <!-- Gazebo Classic's ODE physics step runs on a single thread - 1000
+         steps/sec (the original 0.001 max_step_size) pegs one CPU core at
+         100% regardless of how many cores are free, and on a core that
+         isn't fast enough to keep up, real-time factor drops well below
+         1.0 (observed as low as ~2-3% on one machine). 250 steps/sec is
+         still plenty for a wheeled ground vehicle at these speeds and
+         cuts the per-second physics work 4x. -->
+    <physics type="ode">
+      <real_time_update_rate>250.0</real_time_update_rate>
+      <max_step_size>0.004</max_step_size>
+    </physics>
+  </world>
+</sdf>

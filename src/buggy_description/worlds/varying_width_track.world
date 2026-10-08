@@ -1,0 +1,138 @@
+<?xml version="1.0" ?>
+<sdf version="1.7">
+  <world name="varying_width_track">
+    <include>
+      <uri>model://sun</uri>
+    </include>
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <!-- Same racetrack topology as rect_loop_track.world (outer rectangle
+         + inner island rectangle, four 90deg corners), but each of the
+         four straight legs is a DIFFERENT width, purpose-built to stress
+         the centerline-tracking feature (carrot_path_publisher.py's
+         _centerline_lateral_bias) and inflation-gradient centering across
+         varying corridor widths instead of rect_loop_track.world's
+         uniform 7m everywhere:
+           south (spawn) leg: 7m  - same as rect_loop_track.world, baseline
+           east leg:          9m  - wide
+           west leg:        5.5m  - medium
+           north leg:          4m  - narrow: vehicle width is 2.9m
+             (self_hit_filter.py ROBOT_WIDTH), so this leaves only ~0.55m
+             clearance per side if perfectly centered - deliberately tight,
+             a real test of whether centering actually works rather than
+             just "is there room to spare regardless."
+
+         Inner island is a fixed 20x10m rectangle centered at the origin
+         (corners +-10, +-5); each outer wall is offset from its paired
+         inner wall by that leg's target corridor width, so the outer
+         boundary itself is NOT a simple centered rectangle - it's shifted
+         off-center by construction (south/east offsets differ from
+         north/west). Corners keep the same offset as the wider of their
+         two adjacent legs' geometry implies, at least 5.5m minimum
+         everywhere a turn actually happens, so corner feasibility (see
+         rect_loop_track.world's turning-radius comment) isn't being
+         re-tested here - only the straight-leg width variation is new. -->
+    <model name="varying_width_walls">
+      <static>1</static>
+
+      <!-- Outer perimeter: south y=-12, east x=19, north y=9, west x=-15.5 -->
+      <link name="outer_south">
+        <pose>1.75 -12 0 0 0 0</pose>
+        <collision name="collision">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>34.5 0.15 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>34.5 0.15 2.5</size></box></geometry>
+        </visual>
+      </link>
+      <link name="outer_north">
+        <pose>1.75 9 0 0 0 0</pose>
+        <collision name="collision">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>34.5 0.15 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>34.5 0.15 2.5</size></box></geometry>
+        </visual>
+      </link>
+      <link name="outer_west">
+        <pose>-15.5 -1.5 0 0 0 1.5708</pose>
+        <collision name="collision">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>21 0.15 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>21 0.15 2.5</size></box></geometry>
+        </visual>
+      </link>
+      <link name="outer_east">
+        <pose>19 -1.5 0 0 0 1.5708</pose>
+        <collision name="collision">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>21 0.15 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>21 0.15 2.5</size></box></geometry>
+        </visual>
+      </link>
+
+      <!-- Inner island: fixed 20x10m, corners at (+-10, +-5) -->
+      <link name="inner_south">
+        <pose>0 -5 0 0 0 0</pose>
+        <collision name="collision">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>20 0.15 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>20 0.15 2.5</size></box></geometry>
+        </visual>
+      </link>
+      <link name="inner_north">
+        <pose>0 5 0 0 0 0</pose>
+        <collision name="collision">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>20 0.15 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>20 0.15 2.5</size></box></geometry>
+        </visual>
+      </link>
+      <link name="inner_west">
+        <pose>-10 0 0 0 0 1.5708</pose>
+        <collision name="collision">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>10 0.15 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>10 0.15 2.5</size></box></geometry>
+        </visual>
+      </link>
+      <link name="inner_east">
+        <pose>10 0 0 0 0 1.5708</pose>
+        <collision name="collision">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>10 0.15 2.5</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <pose>0 0 1.25 0 0 0</pose>
+          <geometry><box><size>10 0.15 2.5</size></box></geometry>
+        </visual>
+      </link>
+    </model>
+
+    <physics type="ode">
+      <real_time_update_rate>1000.0</real_time_update_rate>
+      <max_step_size>0.001</max_step_size>
+    </physics>
+  </world>
+</sdf>

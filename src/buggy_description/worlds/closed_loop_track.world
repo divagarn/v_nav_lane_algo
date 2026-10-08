@@ -1,0 +1,26 @@
+<?xml version="1.0" ?>
+<sdf version="1.7">
+  <world name="closed_loop_track">
+    <include>
+      <uri>model://sun</uri>
+    </include>
+    <include>
+      <uri>model://ground_plane</uri>
+    </include>
+
+    <!-- User-built closed-loop track (Gazebo Building Editor), originally
+         saved at /home/divagar/building_editor_models/t2. Requires
+         GAZEBO_MODEL_PATH to include /home/divagar/building_editor_models -
+         set in buggy_description's gazebo.launch.py. -->
+    <include>
+      <uri>model://t2</uri>
+      <name>closed_loop_track_walls</name>
+      <pose>0 0 0 0 0 0</pose>
+    </include>
+
+    <physics type="ode">
+      <real_time_update_rate>1000.0</real_time_update_rate>
+      <max_step_size>0.001</max_step_size>
+    </physics>
+  </world>
+</sdf>
