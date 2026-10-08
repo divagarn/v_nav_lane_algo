@@ -17,18 +17,28 @@ class UartInterface:
     UART Interface for sending structured messages to hardware
     according to the specified protocol.
     """
-    def __init__(self, port, baudrate=115200, timeout=1, ros_logger=None):
+    def __init__(self, port, baudrate=115200, loopback=False, timeout=1, ros_logger=None):
         """
         Initialize the UART interface.
-        
+
         Args:
             port (str): Serial port name (e.g., /dev/ttyTHS0)
             baudrate (int): Baud rate for serial communication
+            loopback (bool): True - never open the real serial port; send()
+                logs what it would have sent and returns True without
+                writing anything. uart_sender_node.py previously passed
+                this positionally into this method's old `timeout` slot
+                (no loopback parameter existed here at all), so it was
+                silently ignored and the real port was always opened
+                regardless of its value - this parameter is what actually
+                implements the documented "nothing is written to the
+                serial port" safety behavior.
             timeout (float): Read/write timeout in seconds
             ros_logger: Optional ROS 2 logger (rclpy node logger) for logging
         """
         self.port = port
         self.baudrate = baudrate
+        self.loopback = loopback
         self.timeout = timeout
         self.serial_conn = None
         self.ros_logger = ros_logger
@@ -57,8 +67,12 @@ class UartInterface:
         console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
         root_logger.addHandler(console_handler)
         
-        # Initialize connection
-        self._connect()
+        # Initialize connection - skipped entirely in loopback mode, so the
+        # real serial port is never opened (not just never written to).
+        if self.loopback:
+            logging.info(f"Loopback mode - not opening UART port {self.port}")
+        else:
+            self._connect()
 
     def _connect(self):
         """Establish connection to the serial port"""
@@ -139,7 +153,11 @@ class UartInterface:
         ascii_str = ''.join(chr(byte) if 32 <= byte <= 126 else f'\\x{byte:02x}' for byte in message)
         logging.info(f"Message packet (hex): {message.hex()}")
         logging.info(f"Message packet (ascii): {ascii_str}")
-        
+
+        if self.loopback:
+            logging.info("Loopback mode - not writing to the serial port")
+            return True
+
         try:
             if not self.serial_conn:
                 logging.warning("No serial connection, attempting to reconnect...")

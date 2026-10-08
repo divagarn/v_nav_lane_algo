@@ -28,7 +28,7 @@ class UartSender(Node):
         self.dms_alert_level = 0.0
         
         # Initialize UART interface (pass ROS logger)
-        self.uart = UartInterface(port, baudrate, loopback, ros_logger=self.get_logger())
+        self.uart = UartInterface(port, baudrate, loopback=loopback, ros_logger=self.get_logger())
         
         # Initialize subscribers
         self.create_subscription(Float32, '/steering_angle', self.steering_callback, 1)
