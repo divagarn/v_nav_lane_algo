@@ -34,3 +34,16 @@ path_obstacle_monitor:
     clear_debounce_cycles: 5
 
     process_rate_hz: 10.0
+
+    # Bend the ahead zone along the live planner path (/suggested_lane)
+    # instead of always going straight from the vehicle's current heading -
+    # false reverts to straight-only (instant rollback, no rebuild needed).
+    enable_path_following_zone: true
+    suggested_lane_topic: /suggested_lane
+    # /suggested_lane older than this is distrusted (planner STUCK, or not
+    # running yet) - costmap_lane_planner simply stops publishing while
+    # STUCK rather than clearing the topic, so this must catch that.
+    path_timeout_sec: 0.5
+    # Distance from the vehicle to the path's nearest point beyond which
+    # the path is distrusted (vehicle has drifted too far off it).
+    path_trust_max_lateral_m: 1.5
