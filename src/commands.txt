@@ -1,0 +1,62 @@
+Sim (Gazebo)
+
+# Terminal 1 - Gazebo + localization against the saved map
+ros2 launch buggy_mapping localize.launch.py \
+  map_name:=my_map2 world:=/home/divagar/buggy_ros2/divagar_test1_ws/install/buggy_description/share/buggy_description/worlds/closed_loop_track.world
+# add ground_filter_device:=segment (or cpu) to switch segment_ground's backend - same arg as real now
+
+# Terminal 2 - costmap planner + moving-obstacle detector + ahead-zone stop gate
+ros2 launch buggy_nav_costmap costmap_navigate.launch.py enable_moving_obstacle_stop:=true
+
+# Terminal 3 - steering command (not started by Terminal 2)
+ros2 run buggy_perception steering_calculator_node
+
+# Terminal 4 - converts /vehicle_speed + /steering_angle into Twist for Gazebo's ackermann controller (not started by Terminal 2)
+ros2 run buggy_nav sim_ackermann_bridge
+
+# Terminal 5 - confirm alignment, then press g
+ros2 run buggy_perception manual_pose_aligner
+Real hardware
+
+# Terminal 1 - real sensors + localization
+ros2 launch buggy_mapping real_localize.launch.py \
+  feedback_port:=/dev/ttyUSB0 rviz:=true ground_filter:=true map_name:=my_map2
+# add ground_filter_device:=segment (or cpu) to switch segment_ground's backend
+# add camera:=true camera_lidar_fusion:=true to also run the camera fusion stop input
+
+# Terminal 2 - costmap planner + detector + ahead-zone stop gate + steering_calculator + uart_sender (all in one launch)
+ros2 launch buggy_nav_costmap real_costmap_navigate.launch.py sender_port:=/dev/ttyUSB0
+# add speed_kmh:=2.0 for the slow preset (default 4.0 -> 4 km/h preset; <=3.0 -> 2 km/h preset)
+# loopback defaults to true (nothing written to serial) - add loopback:=false only after checking /final_red_detected and /steering_angle on the bench
+
+# Terminal 3 - confirm alignment, then press g
+ros2 run buggy_perception manual_pose_aligner
+ground_filter_device default stays gpu on both, so nothing changes unless you pass it explicitly.
+
+
+
+now i want ransac means what i need to give in arg
+11:30 PM
+RANSAC is gpu or cpu — both run the same RANSAC algorithm, just GPU (CUDA) vs CPU (NumPy). Only segment is the new non-RANSAC one.
+
+
+ground_filter_device:=gpu   # RANSAC on GPU/CUDA (default - same as not passing the arg at all)
+ground_filter_device:=cpu   # RANSAC on CPU (NumPy) - same algorithm, slower, no GPU dependency
+So for either sim or real, just add (or omit, since gpu is already the default):
+
+
+ros2 launch buggy_mapping localize.launch.py map_name:=my_map2 ground_filter_device:=gpu        # sim, RANSAC/GPU
+ros2 launch buggy_mapping real_localize.launch.py feedback_port:=/dev/ttyUSB0 rviz:=true ground_filter:=true map_name:=my_map2 ground_filter_device:=gpu   # real, RANSAC/GPU
+
+
+for the new algo means
+11:31 PM
+ground_filter_device:=segment
+
+
+# sim
+ros2 launch buggy_mapping localize.launch.py map_name:=my_map2 ground_filter_device:=segment
+
+# real
+ros2 launch buggy_mapping real_localize.launch.py \
+  feedback_port:=/dev/ttyUSB0 rviz:=true ground_filter:=true map_name:=my_map2 ground_filter_device:=segment
