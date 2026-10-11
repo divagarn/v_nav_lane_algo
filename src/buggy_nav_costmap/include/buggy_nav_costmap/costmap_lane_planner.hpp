@@ -64,6 +64,16 @@ private:
   void publishObstacleAreaMarker(const rclcpp::Time & stamp);
   void publishFreeLaneAreaMarker(
     const rclcpp::Time & stamp, const Vec2 & pos, const ArcResult & chosen);
+  // Orange - the REAL LiDAR-sensed free-space width along the chosen lane
+  // (lateralClearance() at each centerline point, same walk-until-blocked
+  // check the arc planner's own footprint logic uses), not a fixed
+  // margin. If the buggy is between two close walls this hugs that actual
+  // gap; where it's wide open it extends out to corridor_scan_limit_. See
+  // publishFreeLaneAreaMarker (green, fixed clearance_ width) for the
+  // enforced-safety-margin strip this is NOT replacing - this is the
+  // actual available space, that is the guaranteed-safe subset of it.
+  void publishLaneFreeSpaceAreaMarker(
+    const rclcpp::Time & stamp, const Vec2 & pos, const ArcResult & chosen);
 
   // This node's own tf buffer - one lookup per cycle, shared by the
   // pose-graph walker and the arc planner (see planCycle()'s own comment).
@@ -107,6 +117,7 @@ private:
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr lane_marker_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr obstacle_area_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr free_lane_area_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr lane_free_space_area_pub_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr target_lateral_pub_;
   // Consumed directly by buggy_perception's existing freespace_uart_bridge
   // (real-hardware stop/go safety gate) - published every cycle so it's a
@@ -162,7 +173,15 @@ private:
   // where the vehicle actually is/is heading" instead of the whole cloud,
   // per the explicit request to scope this to the relevant forward area
   // rather than a full persistent map.
-  double obstacle_search_radius_ = 25.0;
+  double obstacle_search_radius_ = 30.0;
+  // How much further forward (m) /lane_free_space_area extends past the
+  // suggested lane's own endpoint (lane_lookahead_) - straight-continued
+  // from the lane's last segment direction, still using REAL
+  // lateralClearance() sensing at each extended point (not a flat
+  // repeat of the last measured width). Lets an obstacle (moving or
+  // static) just beyond where the lane currently ends show up in this
+  // zone before the lane itself would have reached that point.
+  double lane_free_space_extra_forward_m_ = 3.0;
 
   // Single, much-stronger-than-the-Python-original weight replacing
   // direction_bias_gain (1.5) + reference_path_weight (1.5): dominates

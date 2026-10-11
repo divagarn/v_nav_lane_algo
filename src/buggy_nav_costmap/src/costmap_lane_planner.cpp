@@ -29,7 +29,8 @@ CostmapLanePlanner::CostmapLanePlanner()
   max_obstacle_height_ = declare_parameter("max_obstacle_height", 2.0);
   obstacle_inflation_radius_ = declare_parameter("obstacle_inflation_radius", 0.25);
   obstacle_safety_margin_ = declare_parameter("obstacle_safety_margin", 0.3);
-  obstacle_search_radius_ = declare_parameter("obstacle_search_radius", 25.0);
+  obstacle_search_radius_ = declare_parameter("obstacle_search_radius", 30.0);
+  lane_free_space_extra_forward_m_ = declare_parameter("lane_free_space_extra_forward_m", 3.0);
   double wheelbase = declare_parameter("wheelbase", 1.6);
   double max_steering_deg = declare_parameter("max_steering_deg", 20.0);
   direction_reference_gain_ = declare_parameter("direction_reference_gain", 6.0);
@@ -95,6 +96,8 @@ CostmapLanePlanner::CostmapLanePlanner()
   lane_marker_pub_ = create_publisher<visualization_msgs::msg::Marker>("/suggested_lane", 1);
   obstacle_area_pub_ = create_publisher<visualization_msgs::msg::Marker>("/obstacle_area", 1);
   free_lane_area_pub_ = create_publisher<visualization_msgs::msg::Marker>("/free_lane_area", 1);
+  lane_free_space_area_pub_ = create_publisher<visualization_msgs::msg::Marker>(
+    "/lane_free_space_area", 1);
   target_lateral_pub_ = create_publisher<std_msgs::msg::Float32>("/target_lateral_position", 1);
   nav_status_pub_ = create_publisher<std_msgs::msg::String>("/nav_status", 1);
   lap_complete_pub_ = create_publisher<std_msgs::msg::Bool>("/lap_complete", 1);
@@ -581,6 +584,110 @@ void CostmapLanePlanner::publishFreeLaneAreaMarker(
   free_lane_area_pub_->publish(marker);
 }
 
+void CostmapLanePlanner::publishLaneFreeSpaceAreaMarker(
+  const rclcpp::Time & stamp, const Vec2 & pos, const ArcResult & chosen)
+{
+  visualization_msgs::msg::Marker marker;
+  marker.header.frame_id = fixed_frame_;
+  marker.header.stamp = stamp;
+  marker.ns = "lane_free_space_area";
+  marker.id = 0;
+  marker.type = visualization_msgs::msg::Marker::TRIANGLE_LIST;
+
+  std::vector<Vec2> centerline;
+  centerline.push_back(pos);
+  centerline.insert(centerline.end(), chosen.points.begin(), chosen.points.end());
+
+  if (centerline.size() < 2) {
+    marker.action = visualization_msgs::msg::Marker::DELETE;
+    lane_free_space_area_pub_->publish(marker);
+    return;
+  }
+
+  // Extend straight past the lane's own endpoint, continuing the last
+  // segment's direction, so an obstacle just beyond where /suggested_lane
+  // currently ends shows up in this zone before the lane itself would
+  // reach that point. Each added point still gets its own real
+  // lateralClearance() reading below (not a flat repeat of the lane's
+  // last measured width) - this only extrapolates the CENTERLINE, not the
+  // sensed width.
+  if (lane_free_space_extra_forward_m_ > 0.0) {
+    size_t n = centerline.size();
+    double dx = centerline[n - 1].x - centerline[n - 2].x;
+    double dy = centerline[n - 1].y - centerline[n - 2].y;
+    double len = std::hypot(dx, dy);
+    if (len > 1e-6) {
+      double ux = dx / len, uy = dy / len;
+      double step = std::max(resolution_, 0.05);
+      int extra_steps = static_cast<int>(lane_free_space_extra_forward_m_ / step);
+      for (int i = 1; i <= extra_steps; ++i) {
+        double d = i * step;
+        centerline.push_back({centerline[n - 1].x + d * ux, centerline[n - 1].y + d * uy});
+      }
+    }
+  }
+
+  marker.action = visualization_msgs::msg::Marker::ADD;
+  marker.pose.orientation.w = 1.0;
+  marker.scale.x = 1.0;
+  marker.scale.y = 1.0;
+  marker.scale.z = 1.0;
+  marker.color.r = 1.0;
+  marker.color.g = 0.55;
+  marker.color.b = 0.0;
+  marker.color.a = 0.25;
+
+  // Local tangent direction at each centerline point - same secant
+  // approximation publishFreeLaneAreaMarker's own perp_offset uses.
+  auto tangent = [&](size_t i) -> std::pair<double, double> {
+      double dx, dy;
+      if (i + 1 < centerline.size()) {
+        dx = centerline[i + 1].x - centerline[i].x;
+        dy = centerline[i + 1].y - centerline[i].y;
+      } else {
+        dx = centerline[i].x - centerline[i - 1].x;
+        dy = centerline[i].y - centerline[i - 1].y;
+      }
+      double len = std::hypot(dx, dy);
+      return len < 1e-6 ? std::make_pair(1.0, 0.0) : std::make_pair(dx / len, dy / len);
+    };
+
+  std::vector<Vec2> left(centerline.size()), right(centerline.size());
+  for (size_t i = 0; i < centerline.size(); ++i) {
+    auto [tx, ty] = tangent(i);
+    double theta = std::atan2(ty, tx);
+    // The REAL sensed free-space distance either side, not a fixed
+    // margin - this is what makes the drawn area hug an actual narrow
+    // gap between two walls instead of always showing the same width.
+    double left_d = lateralClearance(centerline[i].x, centerline[i].y, theta, 1, corridor_scan_limit_);
+    double right_d = lateralClearance(centerline[i].x, centerline[i].y, theta, -1, corridor_scan_limit_);
+    // Perpendicular unit vector (-ty, tx), scaled per side by its own
+    // measured distance rather than a shared constant.
+    left[i] = {centerline[i].x - ty * left_d, centerline[i].y + tx * left_d};
+    right[i] = {centerline[i].x + ty * right_d, centerline[i].y - tx * right_d};
+  }
+
+  auto add_point = [&](const Vec2 & p) {
+      geometry_msgs::msg::Point gp;
+      gp.x = p.x;
+      gp.y = p.y;
+      gp.z = 0.04;
+      marker.points.push_back(gp);
+    };
+
+  for (size_t i = 0; i + 1 < centerline.size(); ++i) {
+    add_point(left[i]);
+    add_point(right[i]);
+    add_point(right[i + 1]);
+
+    add_point(left[i]);
+    add_point(right[i + 1]);
+    add_point(left[i + 1]);
+  }
+
+  lane_free_space_area_pub_->publish(marker);
+}
+
 void CostmapLanePlanner::planCycle()
 {
   // ONE TF snapshot this cycle, shared by the pose-graph walker and the
@@ -695,6 +802,7 @@ void CostmapLanePlanner::planCycle()
   publishTargetLateralPosition(smoothed_k);
   publishLaneMarker(stamp, pos, final_result);
   publishFreeLaneAreaMarker(stamp, pos, final_result);
+  publishLaneFreeSpaceAreaMarker(stamp, pos, final_result);
   nav_status_pub_->publish(std_msgs::msg::String().set__data("OK"));
 }
 

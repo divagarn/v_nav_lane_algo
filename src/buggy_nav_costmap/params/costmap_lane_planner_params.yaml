@@ -97,9 +97,17 @@ costmap_lane_planner:
     # around where the vehicle actually is/is heading, not the whole
     # cloud, matching the explicit request to focus on the relevant
     # forward area rather than a persistent full-map costmap. Must be
-    # comfortably larger than lane_lookahead + vehicle_half_length +
-    # corridor_scan_limit so nothing relevant gets excluded.
-    obstacle_search_radius: 25.0
+    # comfortably larger than lane_lookahead + lane_free_space_extra_
+    # forward_m + vehicle_half_length + corridor_scan_limit so nothing
+    # relevant gets excluded - raise this if either of those grows.
+    obstacle_search_radius: 30.0
+
+    # How much further forward (m) /lane_free_space_area extends past the
+    # suggested lane's own endpoint (straight-continued from the lane's
+    # last segment direction, still using real LiDAR-sensed clearance at
+    # each extended point) - lets an obstacle just beyond where the lane
+    # currently ends show up before the lane itself would reach it.
+    lane_free_space_extra_forward_m: 3.0
 
     wheelbase: 1.6
     max_steering_deg: 20.0

@@ -50,6 +50,7 @@ from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -73,6 +74,17 @@ def generate_launch_description():
         'dynamic_obstacle_detector_params_file', default_value=default_dynamic_obstacle_params)
     path_obstacle_monitor_params_arg = DeclareLaunchArgument(
         'path_obstacle_monitor_params_file', default_value=default_path_monitor_params)
+    lane_lookahead_arg = DeclareLaunchArgument(
+        'lane_lookahead', default_value='12.0',
+        description='How far ahead (m) each candidate arc is checked for clearance and how '
+                    'far /suggested_lane extends. Mainly helps on long straight stretches - '
+                    "near a turn, a candidate's fixed curvature usually hits a wall well "
+                    'before this distance regardless.')
+    steering_lookahead_distance_arg = DeclareLaunchArgument(
+        'steering_lookahead_distance', default_value='4.0',
+        description='How far along the chosen lane the steering target point sits. Higher '
+                    'smooths wide turns but cuts sharp corners more; lower tracks tighter but '
+                    'can be jerkier.')
 
     # When the feature is off this still resolves to the yaml's own
     # default (/non_ground_points_filtered) - a harmless no-op override,
@@ -93,6 +105,10 @@ def generate_launch_description():
             {
                 'use_sim_time': LaunchConfiguration('use_sim_time'),
                 'obstacle_topic': costmap_obstacle_topic,
+                'lane_lookahead': ParameterValue(
+                    LaunchConfiguration('lane_lookahead'), value_type=float),
+                'steering_lookahead_distance': ParameterValue(
+                    LaunchConfiguration('steering_lookahead_distance'), value_type=float),
             },
         ],
     )
@@ -127,6 +143,8 @@ def generate_launch_description():
         enable_moving_obstacle_stop_arg,
         dynamic_obstacle_detector_params_arg,
         path_obstacle_monitor_params_arg,
+        lane_lookahead_arg,
+        steering_lookahead_distance_arg,
         costmap_lane_planner,
         dynamic_obstacle_detector,
         path_obstacle_monitor,

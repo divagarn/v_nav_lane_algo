@@ -51,6 +51,17 @@ def generate_launch_description():
         'speed_kmh', default_value='4.0',
         description='Real hardware only has two speed presets, selected by the 3.0 km/h '
                     'cutoff: <=3.0 -> 2 km/h preset, >3.0 -> 4 km/h preset.')
+    lane_lookahead_arg = DeclareLaunchArgument(
+        'lane_lookahead', default_value='12.0',
+        description='How far ahead (m) each candidate arc is checked for clearance and how '
+                    'far /suggested_lane extends. Mainly helps on long straight stretches - '
+                    "near a turn, a candidate's fixed curvature usually hits a wall well "
+                    'before this distance regardless.')
+    steering_lookahead_distance_arg = DeclareLaunchArgument(
+        'steering_lookahead_distance', default_value='4.0',
+        description='How far along the chosen lane the steering target point sits. Higher '
+                    'smooths wide turns but cuts sharp corners more; lower tracks tighter but '
+                    'can be jerkier.')
 
     costmap_lane_planner = Node(
         package='buggy_nav_costmap',
@@ -59,7 +70,14 @@ def generate_launch_description():
         output='screen',
         parameters=[
             costmap_params,
-            {'use_sim_time': False, 'obstacle_topic': '/static_obstacle_points'},
+            {
+                'use_sim_time': False,
+                'obstacle_topic': '/static_obstacle_points',
+                'lane_lookahead': ParameterValue(
+                    LaunchConfiguration('lane_lookahead'), value_type=float),
+                'steering_lookahead_distance': ParameterValue(
+                    LaunchConfiguration('steering_lookahead_distance'), value_type=float),
+            },
         ],
     )
 
@@ -108,6 +126,8 @@ def generate_launch_description():
         sender_port_arg,
         loopback_arg,
         speed_kmh_arg,
+        lane_lookahead_arg,
+        steering_lookahead_distance_arg,
         costmap_lane_planner,
         dynamic_obstacle_detector,
         path_obstacle_monitor,
