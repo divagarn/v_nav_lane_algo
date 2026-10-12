@@ -75,7 +75,13 @@ costmap_lane_planner:
     # low obstacles near ground level may be missed as a result - a
     # deliberate simplicity/robustness tradeoff, not an oversight.
     min_obstacle_height: -0.6
-    max_obstacle_height: 2.0
+    # 5 ft above GROUND, converted into the sensor's own frame: 5ft *
+    # 0.3048 m/ft - 1.0 (LIDAR_HEIGHT, same mounting-height constant
+    # segment_ground.py uses) = 0.524. Ignores anything taller (overhead
+    # signage, branches, etc.) as an obstacle. Also overridable in feet
+    # directly via the real/sim costmap launch files' max_obstacle_height_ft
+    # arg, which does this same conversion.
+    max_obstacle_height: 0.524
     # Radius around each raw obstacle point that counts as "occupied" -
     # stands in for the point's own physical size/the sensor's angular
     # resolution at range, not the vehicle's safety margin (that's
@@ -108,6 +114,15 @@ costmap_lane_planner:
     # each extended point) - lets an obstacle just beyond where the lane
     # currently ends show up before the lane itself would reach it.
     lane_free_space_extra_forward_m: 3.0
+
+    # /lane_free_space_blocking: a moving obstacle (/moving_obstacle_points)
+    # found inside the free-space corridor above must be seen this many
+    # consecutive planCycle()s before the Bool sets, and this many
+    # consecutive clear cycles before it releases - debounce against
+    # single-cycle noise, same idea as path_obstacle_monitor_node's own
+    # lidar_set_debounce_messages/clear_debounce_cycles.
+    moving_intrusion_set_cycles: 2
+    moving_intrusion_clear_cycles: 5
 
     wheelbase: 1.6
     max_steering_deg: 20.0
@@ -144,6 +159,14 @@ costmap_lane_planner:
     # shortest real gap you'd expect between genuinely separate track
     # segments so an actually-open track is never bridged by mistake.
     loop_closure_max_gap_m: 2.0
+
+    # Roadside sign board (/turn_direction_sign: post + board + arrow,
+    # like a real traffic sign) shown for LEFT/RIGHT only - purely
+    # cosmetic placement ahead and to the right of the vehicle's current
+    # heading, no effect on navigation.
+    turn_sign_distance_m: 2.5
+    turn_sign_lateral_offset_m: 1.8
+    turn_sign_mount_height_m: 2.2
 
     # Set true to stop the vehicle once it returns to wherever the
     # pose-graph route was when 'g' was pressed in manual_pose_aligner

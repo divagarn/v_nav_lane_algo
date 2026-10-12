@@ -29,7 +29,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -62,6 +62,15 @@ def generate_launch_description():
         description='How far along the chosen lane the steering target point sits. Higher '
                     'smooths wide turns but cuts sharp corners more; lower tracks tighter but '
                     'can be jerkier.')
+    max_obstacle_height_ft_arg = DeclareLaunchArgument(
+        'max_obstacle_height_ft', default_value='5.0',
+        description='Ignore LiDAR points taller than this many feet above the GROUND as '
+                    'obstacles (overhead signage, branches, etc.) - converted here into '
+                    "max_obstacle_height's own sensor-frame meters (ft*0.3048 - 1.0, the "
+                    'LiDAR mounting height).')
+
+    max_obstacle_height_m = PythonExpression([
+        "float('", LaunchConfiguration('max_obstacle_height_ft'), "') * 0.3048 - 1.0"])
 
     costmap_lane_planner = Node(
         package='buggy_nav_costmap',
@@ -77,6 +86,7 @@ def generate_launch_description():
                     LaunchConfiguration('lane_lookahead'), value_type=float),
                 'steering_lookahead_distance': ParameterValue(
                     LaunchConfiguration('steering_lookahead_distance'), value_type=float),
+                'max_obstacle_height': ParameterValue(max_obstacle_height_m, value_type=float),
             },
         ],
     )
@@ -128,6 +138,7 @@ def generate_launch_description():
         speed_kmh_arg,
         lane_lookahead_arg,
         steering_lookahead_distance_arg,
+        max_obstacle_height_ft_arg,
         costmap_lane_planner,
         dynamic_obstacle_detector,
         path_obstacle_monitor,

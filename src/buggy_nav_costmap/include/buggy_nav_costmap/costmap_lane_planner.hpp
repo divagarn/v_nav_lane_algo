@@ -64,16 +64,44 @@ private:
   void publishObstacleAreaMarker(const rclcpp::Time & stamp);
   void publishFreeLaneAreaMarker(
     const rclcpp::Time & stamp, const Vec2 & pos, const ArcResult & chosen);
-  // Orange - the REAL LiDAR-sensed free-space width along the chosen lane
-  // (lateralClearance() at each centerline point, same walk-until-blocked
-  // check the arc planner's own footprint logic uses), not a fixed
-  // margin. If the buggy is between two close walls this hugs that actual
-  // gap; where it's wide open it extends out to corridor_scan_limit_. See
+  // The REAL LiDAR-sensed free-space corridor along the chosen lane (+
+  // lane_free_space_extra_forward_m past its end) - centerline plus the
+  // left/right WORLD POINTS lateralClearance() actually reached at each
+  // one, computed ONCE per cycle and shared by the orange visualization
+  // marker below and checkMovingIntrusion()'s safety check, so both agree
+  // on exactly the same shape (no drift between what's drawn and what's
+  // enforced).
+  void computeFreeSpaceCorridor(
+    const Vec2 & pos, const ArcResult & chosen,
+    std::vector<Vec2> & centerline, std::vector<Vec2> & left, std::vector<Vec2> & right) const;
+  // Orange - draws the corridor computeFreeSpaceCorridor() built. If the
+  // buggy is between two close walls this hugs that actual gap; where
+  // it's wide open it extends out to corridor_scan_limit_. See
   // publishFreeLaneAreaMarker (green, fixed clearance_ width) for the
   // enforced-safety-margin strip this is NOT replacing - this is the
   // actual available space, that is the guaranteed-safe subset of it.
   void publishLaneFreeSpaceAreaMarker(
-    const rclcpp::Time & stamp, const Vec2 & pos, const ArcResult & chosen);
+    const rclcpp::Time & stamp,
+    const std::vector<Vec2> & centerline, const std::vector<Vec2> & left,
+    const std::vector<Vec2> & right);
+  void movingPointsCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
+  // A moving obstacle crossing INTO the real free-space corridor above -
+  // the one category of obstacle that corridor is otherwise blind to:
+  // when enable_moving_obstacle_stop's /static_obstacle_points switch is
+  // in effect, lateralClearance()'s own isBlockedWorld() only ever sees
+  // STATIC points (by design, so path selection stays blind to moving
+  // objects - see dynamic_obstacle_detector's own header comment), so the
+  // corridor never narrows for a moving object the way it already does
+  // for a static one. This checks /moving_obstacle_points against the
+  // SAME corridor shape the orange marker draws and publishes
+  // /lane_free_space_blocking (Bool) - path_obstacle_monitor_node ORs
+  // this into its own stop decision, the same extension point its own
+  // header comment already documents for "one more obstacle source".
+  // Static obstacles are NOT re-checked here - they already define the
+  // corridor's own boundary (lateralClearance stops at them), so
+  // path_obstacle_monitor's separate /static_obstacle_points check against
+  // its fixed-width ahead-zone remains the static-obstacle safety net.
+  void checkMovingIntrusion(const std::vector<Vec2> & left, const std::vector<Vec2> & right);
 
   // This node's own tf buffer - one lookup per cycle, shared by the
   // pose-graph walker and the arc planner (see planCycle()'s own comment).
@@ -85,6 +113,18 @@ private:
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
   sensor_msgs::msg::PointCloud2::SharedPtr latest_cloud_;
+
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr moving_points_sub_;
+  sensor_msgs::msg::PointCloud2::SharedPtr latest_moving_cloud_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr lane_free_space_blocking_pub_;
+  // Per-CYCLE consecutive confirmation (not per-message like path_obstacle_
+  // monitor_node's own debounce) - this node already evaluates against
+  // whatever the latest moving-points message is once per planCycle(),
+  // same established pattern latest_cloud_ already uses, so there's no
+  // "topic publishes slower than the timer" problem to work around here.
+  int moving_intrusion_consecutive_ = 0;
+  int moving_intrusion_clear_consecutive_ = 0;
+  bool moving_intrusion_latched_ = false;
 
   // Captures "where the pose-graph route was when navigation was just
   // turned on" (manual_pose_aligner's 'g' key), snapped onto the nearest
@@ -152,7 +192,7 @@ private:
   // clusters around Z=-1.0) - this band excludes the ground while keeping
   // real obstacles, same values already validated for this exact sensor.
   double min_obstacle_height_ = -0.6;
-  double max_obstacle_height_ = 2.0;
+  double max_obstacle_height_ = 0.524;  // 5 ft above ground, sensor frame
   // Radius around each raw obstacle point that counts as "occupied" for
   // isBlockedWorld() - stands in for the point's own physical size/the
   // sensor's angular resolution at range, not the vehicle's safety margin
@@ -182,6 +222,12 @@ private:
   // static) just beyond where the lane currently ends show up in this
   // zone before the lane itself would have reached that point.
   double lane_free_space_extra_forward_m_ = 3.0;
+  // Consecutive planCycle()s a moving point must be found inside the free-
+  // space corridor before /lane_free_space_blocking sets, and consecutive
+  // clear cycles before it releases - same debounce-against-single-cycle-
+  // noise idea as path_obstacle_monitor_node's own thresholds.
+  int moving_intrusion_set_cycles_ = 2;
+  int moving_intrusion_clear_cycles_ = 5;
 
   // Single, much-stronger-than-the-Python-original weight replacing
   // direction_bias_gain (1.5) + reference_path_weight (1.5): dominates

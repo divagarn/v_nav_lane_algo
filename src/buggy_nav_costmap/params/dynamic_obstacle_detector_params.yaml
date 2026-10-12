@@ -74,3 +74,18 @@ dynamic_obstacle_detector:
     moving_color_b: 255
 
     process_rate_hz: 10.0
+
+    # Per-object tracking (/moving_object_tracking: velocity arrow + speed
+    # label + predicted-trajectory line per tracked object, Autoware-
+    # style) - see this node's own "TRACKING" header comment for the two
+    # failure modes an earlier, reverted attempt hit and how these guard
+    # against them. Informational only - does not feed into
+    # /moving_obstacle_points, /static_obstacle_points, or any stop logic.
+    #
+    # A detected object beyond this of every existing track's last known
+    # position spawns a NEW track rather than updating one.
+    max_track_jump_m: 2.0
+    # Consecutive cycles a track can go unmatched before being dropped.
+    max_missed_cycles: 5
+    # How far ahead (seconds) the predicted-trajectory line extends.
+    prediction_horizon_sec: 2.0

@@ -12,6 +12,7 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
+#include <visualization_msgs/msg/marker_array.hpp>
 
 namespace buggy_nav_costmap
 {
@@ -70,6 +71,31 @@ namespace buggy_nav_costmap
 // vehicle in a given buffered scan couldn't have been recorded there
 // regardless of what was actually present, so that scan must not count
 // against it in the static_score denominator.
+//
+// TRACKING (velocity + predicted trajectory, Autoware-style): a second,
+// SEPARATE pass over the already-filtered moving blobs above - one
+// persistent Track per blob, matched frame-to-frame by nearest centroid
+// within max_track_jump_m_. This is the same category of feature this
+// class's own header comment above says was tried once already and
+// reverted for two confirmed failure modes - this version exists
+// specifically because both are now addressed structurally rather than
+// re-attempted as-is:
+//   1. Centroid jumping between frames: a detected centroid can only
+//      ever update an EXISTING track if it's within max_track_jump_m_ of
+//      that track's last position - too far away spawns a NEW track
+//      instead of being (wrongly) treated as "the same object moved
+//      that far in one cycle".
+//   2. Sim-time stalls corrupting velocity: processCycle() already
+//      returns before reaching this code at all when the clock hasn't
+//      advanced since the last cycle (see its own top-of-function guard)
+//      - velocity is always dt/(genuinely elapsed time), never dt/~0.
+// Published as /moving_object_tracking (MarkerArray): a velocity arrow +
+// speed-label text + predicted-trajectory line per track with a valid
+// velocity estimate (a brand-new track has none yet - first sighting
+// only gives a position). Pure additional output; does not change what
+// /moving_obstacle_points or /static_obstacle_points contain, and
+// nothing downstream (path_obstacle_monitor_node's stop gate, costmap_
+// lane_planner) consumes it - this is informational only for now.
 class DynamicObstacleDetector : public rclcpp::Node
 {
 public:
@@ -93,6 +119,16 @@ private:
     bool have_vpos = false;
   };
 
+  struct Track
+  {
+    int id = 0;
+    double x = 0.0, y = 0.0;
+    double vx = 0.0, vy = 0.0;
+    bool has_velocity = false;  // false until a second sighting confirms one
+    rclcpp::Time last_update;
+    int missed_cycles = 0;
+  };
+
   void cloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
   void processCycle();
   bool transformLatestCloud(
@@ -112,12 +148,30 @@ private:
   int coverageCount(int64_t key) const;
   void publishMovingPoints(const rclcpp::Time & stamp, const std::vector<Point3> & moving_points);
   void publishStaticPoints(const rclcpp::Time & stamp, const std::vector<Point3> & static_points);
+  // One centroid per connected blob in the (already fully filtered) final
+  // moving_cells set - a second, cheap flood-fill pass purely to get
+  // per-object identity for tracking, same 8-connectivity idiom as
+  // filterSmallBlobs. Does not re-apply any size/extent filtering (that
+  // already happened).
+  std::vector<Point3> computeBlobCentroids(
+    const std::unordered_set<int64_t> & moving_cells,
+    const std::vector<Point3> & current_points) const;
+  // Nearest-centroid association gated by max_track_jump_m_, velocity
+  // from consecutive matched sightings, missed-cycle pruning - see this
+  // class's own header "TRACKING" comment for the two failure modes this
+  // specifically guards against.
+  void updateTracks(const rclcpp::Time & stamp, const std::vector<Point3> & centroids);
+  void publishTrackingMarkers(const rclcpp::Time & stamp);
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
   sensor_msgs::msg::PointCloud2::SharedPtr latest_cloud_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr moving_points_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr static_points_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr tracking_markers_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
+
+  std::vector<Track> tracks_;
+  int next_track_id_ = 0;
 
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
@@ -175,6 +229,16 @@ private:
   double process_rate_hz_ = 10.0;
   bool has_last_cycle_time_ = false;
   rclcpp::Time last_cycle_time_;
+
+  // Tracking params - see this class's own "TRACKING" header comment.
+  // A detected centroid beyond this of every existing track's last
+  // position spawns a new track rather than updating one - the specific
+  // guard against the "centroid jumped between frames" failure mode.
+  double max_track_jump_m_ = 2.0;
+  // Consecutive cycles a track can go unmatched before being dropped.
+  int max_missed_cycles_ = 5;
+  // How far ahead (seconds) the predicted-trajectory line extends.
+  double prediction_horizon_sec_ = 2.0;
 };
 
 }  // namespace buggy_nav_costmap

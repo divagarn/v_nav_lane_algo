@@ -61,6 +61,11 @@ public:
     // genuinely distant parts of a loop that just happen to be adjacent
     // in recording order, never gets bridged by mistake.
     double loop_closure_max_gap_m = 2.0;
+    // Roadside sign board placement (see publishTurnSignMarker's own
+    // comment) - purely cosmetic, no effect on navigation.
+    double turn_sign_distance_m = 2.5;
+    double turn_sign_lateral_offset_m = 1.8;
+    double turn_sign_mount_height_m = 2.2;
   };
 
   PoseGraphWalker(rclcpp::Node * node, tf2_ros::Buffer * tf_buffer, const Params & params);
@@ -106,6 +111,15 @@ private:
   void publishTurnDirectionPathMarker(
     const rclcpp::Time & stamp, const std::vector<Vec2> * points,
     const std::array<double, 4> & color);
+  // Roadside sign board (post + flat board + arrow), like a real traffic
+  // sign, for LEFT/RIGHT only - mounted turn_sign_distance_m ahead and
+  // turn_sign_lateral_offset_m to the right of the vehicle's current
+  // heading, board face turned to face the approaching vehicle, arrow
+  // pointing the actual world-frame turn direction. DELETEs (hidden) for
+  // STRAIGHT - real roads don't post a sign for "no turn" either.
+  void publishTurnSignMarker(
+    const rclcpp::Time & stamp, double x0, double y0, double current_yaw,
+    const std::string & direction, const std::array<double, 4> & color);
   void publishRoutePreviewMarker(const rclcpp::Time & stamp, const std::vector<Vec2> * points);
 
   rclcpp::Node * node_;
@@ -143,6 +157,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr distance_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr text_marker_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr path_marker_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr turn_sign_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr nearest_vertex_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr nearest_link_pub_;
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr nearest_text_pub_;

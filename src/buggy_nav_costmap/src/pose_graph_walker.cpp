@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <geometry_msgs/msg/point.hpp>
+#include <geometry_msgs/msg/quaternion.hpp>
 #include <limits>
 
 namespace buggy_nav_costmap
@@ -39,6 +40,8 @@ PoseGraphWalker::PoseGraphWalker(
     node_->create_publisher<visualization_msgs::msg::Marker>("/turn_direction_marker", 1);
   path_marker_pub_ =
     node_->create_publisher<visualization_msgs::msg::Marker>("/turn_direction_path", 1);
+  turn_sign_pub_ =
+    node_->create_publisher<visualization_msgs::msg::Marker>("/turn_direction_sign", 1);
   nearest_vertex_pub_ =
     node_->create_publisher<visualization_msgs::msg::Marker>("/nearest_pose_graph_vertex", 1);
   nearest_link_pub_ =
@@ -433,6 +436,7 @@ void PoseGraphWalker::tick(double x0, double y0, double current_yaw, const rclcp
       stamp, x0, y0, "STRAIGHT", {1.0, 1.0, 1.0, 0.9},
       std::numeric_limits<double>::quiet_NaN());
     publishTurnDirectionPathMarker(stamp, nullptr, {1.0, 1.0, 1.0, 0.9});
+    publishTurnSignMarker(stamp, x0, y0, current_yaw, "STRAIGHT", {1.0, 1.0, 1.0, 0.9});
     reference_path_points_.clear();
     has_reference_path_ = false;
     publishRoutePreviewMarker(stamp, nullptr);
@@ -467,6 +471,7 @@ void PoseGraphWalker::tick(double x0, double y0, double current_yaw, const rclcp
   distance_pub_->publish(std_msgs::msg::Float32().set__data(static_cast<float>(turn_distance)));
   publishTurnDirectionTextMarker(stamp, x0, y0, direction, color, turn_distance);
   publishTurnDirectionPathMarker(stamp, &(*path), color);
+  publishTurnSignMarker(stamp, x0, y0, current_yaw, direction, color);
 
   auto preview_path = robustLookaheadPath(
     x0, y0, current_yaw, p_.route_preview_distance_m, "preview");
@@ -678,6 +683,93 @@ void PoseGraphWalker::publishTurnDirectionPathMarker(
     }
   }
   path_marker_pub_->publish(marker);
+}
+
+void PoseGraphWalker::publishTurnSignMarker(
+  const rclcpp::Time & stamp, double x0, double y0, double current_yaw,
+  const std::string & direction, const std::array<double, 4> & color)
+{
+  auto yaw_quat = [](double yaw) {
+      geometry_msgs::msg::Quaternion q;
+      q.z = std::sin(yaw / 2.0);
+      q.w = std::cos(yaw / 2.0);
+      return q;
+    };
+
+  visualization_msgs::msg::Marker post;
+  post.header.frame_id = p_.fixed_frame;
+  post.header.stamp = stamp;
+  post.ns = "turn_direction_sign";
+  post.id = 0;
+
+  if (direction == "STRAIGHT") {
+    // No sign for "go straight" - real roads don't post one either.
+    post.action = visualization_msgs::msg::Marker::DELETE;
+    turn_sign_pub_->publish(post);
+    visualization_msgs::msg::Marker board_del = post; board_del.id = 1;
+    turn_sign_pub_->publish(board_del);
+    visualization_msgs::msg::Marker arrow_del = post; arrow_del.id = 2;
+    turn_sign_pub_->publish(arrow_del);
+    return;
+  }
+
+  // Mounted ahead and to the right of the vehicle's current heading, like
+  // a roadside sign the vehicle is approaching - purely cosmetic
+  // placement, independent of which side the actual turn goes.
+  double right_x = std::sin(current_yaw), right_y = -std::cos(current_yaw);
+  double sign_x = x0 + p_.turn_sign_distance_m * std::cos(current_yaw) +
+    p_.turn_sign_lateral_offset_m * right_x;
+  double sign_y = y0 + p_.turn_sign_distance_m * std::sin(current_yaw) +
+    p_.turn_sign_lateral_offset_m * right_y;
+
+  post.type = visualization_msgs::msg::Marker::CYLINDER;
+  post.action = visualization_msgs::msg::Marker::ADD;
+  post.pose.position.x = sign_x;
+  post.pose.position.y = sign_y;
+  post.pose.position.z = (p_.turn_sign_mount_height_m - 0.4) / 2.0;
+  post.pose.orientation.w = 1.0;
+  post.scale.x = 0.06; post.scale.y = 0.06; post.scale.z = p_.turn_sign_mount_height_m - 0.4;
+  post.color.r = 0.4f; post.color.g = 0.4f; post.color.b = 0.4f; post.color.a = 0.9f;
+  turn_sign_pub_->publish(post);
+
+  // Board face turned to face the approaching vehicle (normal pointing
+  // back along -travel direction - CUBE's local +X, its thin "depth"
+  // axis, is its face normal at identity orientation, so yaw it by
+  // current_yaw+pi).
+  visualization_msgs::msg::Marker board;
+  board.header.frame_id = p_.fixed_frame;
+  board.header.stamp = stamp;
+  board.ns = "turn_direction_sign";
+  board.id = 1;
+  board.type = visualization_msgs::msg::Marker::CUBE;
+  board.action = visualization_msgs::msg::Marker::ADD;
+  board.pose.position.x = sign_x;
+  board.pose.position.y = sign_y;
+  board.pose.position.z = p_.turn_sign_mount_height_m;
+  board.pose.orientation = yaw_quat(current_yaw + M_PI);
+  board.scale.x = 0.05; board.scale.y = 0.7; board.scale.z = 0.7;
+  board.color.r = color[0]; board.color.g = color[1]; board.color.b = color[2];
+  board.color.a = 1.0f;
+  turn_sign_pub_->publish(board);
+
+  // Arrow in world-frame left/right of the actual travel direction - a
+  // small forward offset (along -travel, i.e. back toward the vehicle)
+  // keeps it from z-fighting with the board's face.
+  double arrow_yaw = current_yaw + (direction == "LEFT" ? M_PI / 2.0 : -M_PI / 2.0);
+  visualization_msgs::msg::Marker arrow;
+  arrow.header.frame_id = p_.fixed_frame;
+  arrow.header.stamp = stamp;
+  arrow.ns = "turn_direction_sign";
+  arrow.id = 2;
+  arrow.type = visualization_msgs::msg::Marker::ARROW;
+  arrow.action = visualization_msgs::msg::Marker::ADD;
+  arrow.pose.position.x = sign_x - 0.04 * std::cos(current_yaw);
+  arrow.pose.position.y = sign_y - 0.04 * std::sin(current_yaw);
+  arrow.pose.position.z = p_.turn_sign_mount_height_m;
+  arrow.pose.orientation = yaw_quat(arrow_yaw);
+  arrow.scale.x = 0.45; arrow.scale.y = 0.18; arrow.scale.z = 0.18;
+  arrow.color.r = 1.0f; arrow.color.g = 1.0f; arrow.color.b = 1.0f; arrow.color.a = 1.0f;
+  turn_sign_pub_->publish(arrow);
 }
 
 void PoseGraphWalker::publishRoutePreviewMarker(

@@ -23,6 +23,12 @@ namespace buggy_nav_costmap
 //   - static LiDAR points  (/static_obstacle_points, same node)
 //   - camera fusion        (/camera_red_detected, a boolean - blocks while
 //                           true and fresh)
+//   - lane free-space      (/lane_free_space_blocking, costmap_lane_
+//                           planner - a moving obstacle crossing into the
+//                           REAL LiDAR-sensed free-space corridor along
+//                           the suggested lane, which lateralClearance()
+//                           is otherwise blind to for moving objects by
+//                           design - see that node's checkMovingIntrusion())
 //
 // The corridor BENDS along the live planner path (/suggested_lane) when
 // one is actually usable this cycle - fresh, long enough, close to the
@@ -82,6 +88,7 @@ private:
   void movingPointsCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
   void staticPointsCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
   void cameraRedCallback(const std_msgs::msg::Bool::SharedPtr msg);
+  void laneFreeSpaceBlockingCallback(const std_msgs::msg::Bool::SharedPtr msg);
   void navigationEnabledCallback(const std_msgs::msg::Bool::SharedPtr msg);
   void suggestedLaneCallback(const visualization_msgs::msg::Marker::SharedPtr msg);
   void evaluateSource(LidarSource & src, const sensor_msgs::msg::PointCloud2::SharedPtr msg,
@@ -96,6 +103,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr moving_points_sub_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr static_points_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr camera_red_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr lane_free_space_blocking_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr navigation_enabled_sub_;
   rclcpp::Subscription<visualization_msgs::msg::Marker>::SharedPtr suggested_lane_sub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr blocking_pub_;
@@ -128,6 +136,21 @@ private:
   bool camera_red_ = false;
   rclcpp::Time last_camera_red_time_;
   bool has_camera_red_ = false;
+
+  // /lane_free_space_blocking (costmap_lane_planner): a moving obstacle
+  // crossing into the REAL LiDAR-sensed free-space corridor along the
+  // suggested lane - see that node's checkMovingIntrusion() for why this
+  // is the one obstacle category the fixed-width ahead-zone above and
+  // costmap_lane_planner's own path-selection grid can both miss. Fail-
+  // open on staleness (same reasoning as camera_red_'s own comment) -
+  // this is an additional layer on top of the ahead-zone/static-obstacle
+  // checks already above, not a replacement, so losing it temporarily
+  // must not hold the vehicle forever.
+  bool lane_free_space_blocking_ = false;
+  rclcpp::Time last_lane_free_space_blocking_time_;
+  bool has_lane_free_space_blocking_ = false;
+  double lane_free_space_blocking_timeout_sec_ = 1.0;
+  std::string lane_free_space_blocking_topic_;
 
   // /navigation_enabled (manual_pose_aligner g/x). Real hardware ignores speed
   // commands, so the stop flag must also be set while navigation is not

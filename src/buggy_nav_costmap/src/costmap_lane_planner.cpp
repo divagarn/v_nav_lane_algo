@@ -26,11 +26,17 @@ CostmapLanePlanner::CostmapLanePlanner()
   vehicle_half_length_ = declare_parameter("vehicle_half_length", 1.8);
   vehicle_footprint_margin_ = declare_parameter("vehicle_footprint_margin", 0.3);
   min_obstacle_height_ = declare_parameter("min_obstacle_height", -0.6);
-  max_obstacle_height_ = declare_parameter("max_obstacle_height", 2.0);
+  // Default = 5 ft above GROUND, expressed in the sensor's own frame (see
+  // this value's own comment two lines below the matching yaml entry):
+  // 5ft * 0.3048 m/ft - LIDAR_HEIGHT (1.0m, same mounting height constant
+  // segment_ground.py uses) = 0.524.
+  max_obstacle_height_ = declare_parameter("max_obstacle_height", 0.524);
   obstacle_inflation_radius_ = declare_parameter("obstacle_inflation_radius", 0.25);
   obstacle_safety_margin_ = declare_parameter("obstacle_safety_margin", 0.3);
   obstacle_search_radius_ = declare_parameter("obstacle_search_radius", 30.0);
   lane_free_space_extra_forward_m_ = declare_parameter("lane_free_space_extra_forward_m", 3.0);
+  moving_intrusion_set_cycles_ = declare_parameter("moving_intrusion_set_cycles", 2);
+  moving_intrusion_clear_cycles_ = declare_parameter("moving_intrusion_clear_cycles", 5);
   double wheelbase = declare_parameter("wheelbase", 1.6);
   double max_steering_deg = declare_parameter("max_steering_deg", 20.0);
   direction_reference_gain_ = declare_parameter("direction_reference_gain", 6.0);
@@ -66,6 +72,9 @@ CostmapLanePlanner::CostmapLanePlanner()
     declare_parameter("route_preview_cache_timeout_sec", 999999.0);
   pg_params.turn_signal_timeout_sec = declare_parameter("turn_signal_timeout_sec", 2.0);
   pg_params.loop_closure_max_gap_m = declare_parameter("loop_closure_max_gap_m", 2.0);
+  pg_params.turn_sign_distance_m = declare_parameter("turn_sign_distance_m", 2.5);
+  pg_params.turn_sign_lateral_offset_m = declare_parameter("turn_sign_lateral_offset_m", 1.8);
+  pg_params.turn_sign_mount_height_m = declare_parameter("turn_sign_mount_height_m", 2.2);
 
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -83,6 +92,17 @@ CostmapLanePlanner::CostmapLanePlanner()
       cloudCallback(msg);
     });
 
+  // Independent of obstacle_topic_ above (which is /static_obstacle_points
+  // when enable_moving_obstacle_stop's switch is in effect, specifically
+  // EXCLUDING moving points from path selection) - see checkMovingIntrusion()'s
+  // own comment for why this corridor needs its own, separate moving-point
+  // subscription to stay aware of them at all.
+  moving_points_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
+    "/moving_obstacle_points", rclcpp::SensorDataQoS(),
+    [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+      movingPointsCallback(msg);
+    });
+
   // /navigation_enabled is the same topic manual_pose_aligner publishes on
   // 'g' - plain volatile QoS to match its publisher (manual_pose_aligner
   // republishes every 0.2s specifically so a late/volatile subscriber never
@@ -98,6 +118,8 @@ CostmapLanePlanner::CostmapLanePlanner()
   free_lane_area_pub_ = create_publisher<visualization_msgs::msg::Marker>("/free_lane_area", 1);
   lane_free_space_area_pub_ = create_publisher<visualization_msgs::msg::Marker>(
     "/lane_free_space_area", 1);
+  lane_free_space_blocking_pub_ = create_publisher<std_msgs::msg::Bool>(
+    "/lane_free_space_blocking", 1);
   target_lateral_pub_ = create_publisher<std_msgs::msg::Float32>("/target_lateral_position", 1);
   nav_status_pub_ = create_publisher<std_msgs::msg::String>("/nav_status", 1);
   lap_complete_pub_ = create_publisher<std_msgs::msg::Bool>("/lap_complete", 1);
@@ -120,6 +142,11 @@ CostmapLanePlanner::CostmapLanePlanner()
 void CostmapLanePlanner::cloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
 {
   latest_cloud_ = msg;
+}
+
+void CostmapLanePlanner::movingPointsCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+{
+  latest_moving_cloud_ = msg;
 }
 
 void CostmapLanePlanner::navigationEnabledCallback(const std_msgs::msg::Bool::SharedPtr msg)
@@ -584,23 +611,18 @@ void CostmapLanePlanner::publishFreeLaneAreaMarker(
   free_lane_area_pub_->publish(marker);
 }
 
-void CostmapLanePlanner::publishLaneFreeSpaceAreaMarker(
-  const rclcpp::Time & stamp, const Vec2 & pos, const ArcResult & chosen)
+void CostmapLanePlanner::computeFreeSpaceCorridor(
+  const Vec2 & pos, const ArcResult & chosen,
+  std::vector<Vec2> & centerline, std::vector<Vec2> & left, std::vector<Vec2> & right) const
 {
-  visualization_msgs::msg::Marker marker;
-  marker.header.frame_id = fixed_frame_;
-  marker.header.stamp = stamp;
-  marker.ns = "lane_free_space_area";
-  marker.id = 0;
-  marker.type = visualization_msgs::msg::Marker::TRIANGLE_LIST;
+  centerline.clear();
+  left.clear();
+  right.clear();
 
-  std::vector<Vec2> centerline;
   centerline.push_back(pos);
   centerline.insert(centerline.end(), chosen.points.begin(), chosen.points.end());
 
   if (centerline.size() < 2) {
-    marker.action = visualization_msgs::msg::Marker::DELETE;
-    lane_free_space_area_pub_->publish(marker);
     return;
   }
 
@@ -627,16 +649,6 @@ void CostmapLanePlanner::publishLaneFreeSpaceAreaMarker(
     }
   }
 
-  marker.action = visualization_msgs::msg::Marker::ADD;
-  marker.pose.orientation.w = 1.0;
-  marker.scale.x = 1.0;
-  marker.scale.y = 1.0;
-  marker.scale.z = 1.0;
-  marker.color.r = 1.0;
-  marker.color.g = 0.55;
-  marker.color.b = 0.0;
-  marker.color.a = 0.25;
-
   // Local tangent direction at each centerline point - same secant
   // approximation publishFreeLaneAreaMarker's own perp_offset uses.
   auto tangent = [&](size_t i) -> std::pair<double, double> {
@@ -652,13 +664,15 @@ void CostmapLanePlanner::publishLaneFreeSpaceAreaMarker(
       return len < 1e-6 ? std::make_pair(1.0, 0.0) : std::make_pair(dx / len, dy / len);
     };
 
-  std::vector<Vec2> left(centerline.size()), right(centerline.size());
+  left.resize(centerline.size());
+  right.resize(centerline.size());
   for (size_t i = 0; i < centerline.size(); ++i) {
     auto [tx, ty] = tangent(i);
     double theta = std::atan2(ty, tx);
     // The REAL sensed free-space distance either side, not a fixed
-    // margin - this is what makes the drawn area hug an actual narrow
-    // gap between two walls instead of always showing the same width.
+    // margin - this is what makes the corridor hug an actual narrow gap
+    // between two walls instead of always showing/enforcing the same
+    // width.
     double left_d = lateralClearance(centerline[i].x, centerline[i].y, theta, 1, corridor_scan_limit_);
     double right_d = lateralClearance(centerline[i].x, centerline[i].y, theta, -1, corridor_scan_limit_);
     // Perpendicular unit vector (-ty, tx), scaled per side by its own
@@ -666,6 +680,35 @@ void CostmapLanePlanner::publishLaneFreeSpaceAreaMarker(
     left[i] = {centerline[i].x - ty * left_d, centerline[i].y + tx * left_d};
     right[i] = {centerline[i].x + ty * right_d, centerline[i].y - tx * right_d};
   }
+}
+
+void CostmapLanePlanner::publishLaneFreeSpaceAreaMarker(
+  const rclcpp::Time & stamp,
+  const std::vector<Vec2> & centerline, const std::vector<Vec2> & left,
+  const std::vector<Vec2> & right)
+{
+  visualization_msgs::msg::Marker marker;
+  marker.header.frame_id = fixed_frame_;
+  marker.header.stamp = stamp;
+  marker.ns = "lane_free_space_area";
+  marker.id = 0;
+  marker.type = visualization_msgs::msg::Marker::TRIANGLE_LIST;
+
+  if (centerline.size() < 2) {
+    marker.action = visualization_msgs::msg::Marker::DELETE;
+    lane_free_space_area_pub_->publish(marker);
+    return;
+  }
+
+  marker.action = visualization_msgs::msg::Marker::ADD;
+  marker.pose.orientation.w = 1.0;
+  marker.scale.x = 1.0;
+  marker.scale.y = 1.0;
+  marker.scale.z = 1.0;
+  marker.color.r = 1.0;
+  marker.color.g = 0.55;
+  marker.color.b = 0.0;
+  marker.color.a = 0.25;
 
   auto add_point = [&](const Vec2 & p) {
       geometry_msgs::msg::Point gp;
@@ -686,6 +729,64 @@ void CostmapLanePlanner::publishLaneFreeSpaceAreaMarker(
   }
 
   lane_free_space_area_pub_->publish(marker);
+}
+
+namespace
+{
+// Standard sign-based point-in-triangle test.
+bool pointInTriangle(double px, double py, const Vec2 & a, const Vec2 & b, const Vec2 & c)
+{
+  double d1 = (px - b.x) * (a.y - b.y) - (a.x - b.x) * (py - b.y);
+  double d2 = (px - c.x) * (b.y - c.y) - (b.x - c.x) * (py - c.y);
+  double d3 = (px - a.x) * (c.y - a.y) - (c.x - a.x) * (py - a.y);
+  bool has_neg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+  bool has_pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+  return !(has_neg && has_pos);
+}
+}  // namespace
+
+void CostmapLanePlanner::checkMovingIntrusion(
+  const std::vector<Vec2> & left, const std::vector<Vec2> & right)
+{
+  bool intrusion_now = false;
+
+  if (left.size() >= 2 && latest_moving_cloud_) {
+    sensor_msgs::PointCloud2ConstIterator<float> iter_x(*latest_moving_cloud_, "x");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_y(*latest_moving_cloud_, "y");
+    for (; iter_x != iter_x.end() && !intrusion_now; ++iter_x, ++iter_y) {
+      if (!std::isfinite(*iter_x) || !std::isfinite(*iter_y)) {
+        continue;
+      }
+      // Same two-triangle split publishLaneFreeSpaceAreaMarker draws, so
+      // "inside" here means literally inside the orange shape on screen.
+      for (size_t i = 0; i + 1 < left.size(); ++i) {
+        if (pointInTriangle(*iter_x, *iter_y, left[i], right[i], right[i + 1]) ||
+          pointInTriangle(*iter_x, *iter_y, left[i], right[i + 1], left[i + 1]))
+        {
+          intrusion_now = true;
+          break;
+        }
+      }
+    }
+  }
+
+  if (intrusion_now) {
+    moving_intrusion_consecutive_ += 1;
+    moving_intrusion_clear_consecutive_ = 0;
+    if (moving_intrusion_consecutive_ >= moving_intrusion_set_cycles_) {
+      moving_intrusion_latched_ = true;
+    }
+  } else {
+    moving_intrusion_consecutive_ = 0;
+    moving_intrusion_clear_consecutive_ += 1;
+    if (moving_intrusion_clear_consecutive_ >= moving_intrusion_clear_cycles_) {
+      moving_intrusion_latched_ = false;
+    }
+  }
+
+  std_msgs::msg::Bool msg;
+  msg.data = moving_intrusion_latched_;
+  lane_free_space_blocking_pub_->publish(msg);
 }
 
 void CostmapLanePlanner::planCycle()
@@ -802,7 +903,12 @@ void CostmapLanePlanner::planCycle()
   publishTargetLateralPosition(smoothed_k);
   publishLaneMarker(stamp, pos, final_result);
   publishFreeLaneAreaMarker(stamp, pos, final_result);
-  publishLaneFreeSpaceAreaMarker(stamp, pos, final_result);
+  {
+    std::vector<Vec2> free_space_centerline, free_space_left, free_space_right;
+    computeFreeSpaceCorridor(pos, final_result, free_space_centerline, free_space_left, free_space_right);
+    publishLaneFreeSpaceAreaMarker(stamp, free_space_centerline, free_space_left, free_space_right);
+    checkMovingIntrusion(free_space_left, free_space_right);
+  }
   nav_status_pub_->publish(std_msgs::msg::String().set__data("OK"));
 }
 

@@ -47,3 +47,11 @@ path_obstacle_monitor:
     # Distance from the vehicle to the path's nearest point beyond which
     # the path is distrusted (vehicle has drifted too far off it).
     path_trust_max_lateral_m: 1.5
+
+    # costmap_lane_planner's /lane_free_space_blocking (a moving obstacle
+    # crossing into the REAL free-space corridor along the suggested lane)
+    # - fail-open on staleness like camera_red_topic above, since this is
+    # an additional layer on top of the checks above it, not their
+    # replacement.
+    lane_free_space_blocking_topic: /lane_free_space_blocking
+    lane_free_space_blocking_timeout_sec: 1.0

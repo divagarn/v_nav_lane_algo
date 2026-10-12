@@ -34,6 +34,10 @@ PathObstacleMonitor::PathObstacleMonitor()
   enable_path_following_zone_ = declare_parameter("enable_path_following_zone", true);
   path_timeout_sec_ = declare_parameter("path_timeout_sec", 0.5);
   path_trust_max_lateral_m_ = declare_parameter("path_trust_max_lateral_m", 1.5);
+  lane_free_space_blocking_topic_ = declare_parameter(
+    "lane_free_space_blocking_topic", std::string("/lane_free_space_blocking"));
+  lane_free_space_blocking_timeout_sec_ =
+    declare_parameter("lane_free_space_blocking_timeout_sec", 1.0);
 
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -52,6 +56,11 @@ PathObstacleMonitor::PathObstacleMonitor()
     camera_red_topic_, 1,
     [this](const std_msgs::msg::Bool::SharedPtr msg) {
       cameraRedCallback(msg);
+    });
+  lane_free_space_blocking_sub_ = create_subscription<std_msgs::msg::Bool>(
+    lane_free_space_blocking_topic_, 1,
+    [this](const std_msgs::msg::Bool::SharedPtr msg) {
+      laneFreeSpaceBlockingCallback(msg);
     });
 
   navigation_enabled_sub_ = create_subscription<std_msgs::msg::Bool>(
@@ -78,11 +87,12 @@ PathObstacleMonitor::PathObstacleMonitor()
     get_logger(),
     "path_obstacle_monitor: ahead zone %.1fm (from +%.1fm) x %.2fm half-width in %s from %s; "
     "bends along %s when fresh/close/aligned (enable_path_following_zone=%s), else straight; "
-    "sources: %s, %s, %s -> /moving_obstacle_blocking + /final_red_detected",
+    "sources: %s, %s, %s, %s -> /moving_obstacle_blocking + /final_red_detected",
     ahead_zone_length_m_, zone_start_offset_m_, ahead_zone_half_width_m_, fixed_frame_.c_str(),
     vehicle_frame_.c_str(), suggested_lane_topic_.c_str(),
     enable_path_following_zone_ ? "true" : "false", moving_points_topic_.c_str(),
-    static_points_topic_.c_str(), camera_red_topic_.c_str());
+    static_points_topic_.c_str(), camera_red_topic_.c_str(),
+    lane_free_space_blocking_topic_.c_str());
 }
 
 bool PathObstacleMonitor::getVehiclePose(double & x, double & y, double & yaw)
@@ -112,6 +122,13 @@ void PathObstacleMonitor::cameraRedCallback(const std_msgs::msg::Bool::SharedPtr
   camera_red_ = msg->data;
   last_camera_red_time_ = get_clock()->now();
   has_camera_red_ = true;
+}
+
+void PathObstacleMonitor::laneFreeSpaceBlockingCallback(const std_msgs::msg::Bool::SharedPtr msg)
+{
+  lane_free_space_blocking_ = msg->data;
+  last_lane_free_space_blocking_time_ = get_clock()->now();
+  has_lane_free_space_blocking_ = true;
 }
 
 void PathObstacleMonitor::suggestedLaneCallback(
@@ -462,8 +479,20 @@ void PathObstacleMonitor::processCycle()
     camera_blocking = camera_red_;
   }
 
+  // A moving obstacle crossing into the REAL LiDAR-sensed free-space
+  // corridor along the suggested lane (costmap_lane_planner's own
+  // checkMovingIntrusion()) - fail-open on staleness like camera_blocking
+  // above, since this is an additional layer on top of the checks below,
+  // not their replacement.
+  bool lane_free_space_blocking = false;
+  if (has_lane_free_space_blocking_ &&
+    (stamp - last_lane_free_space_blocking_time_).seconds() <= lane_free_space_blocking_timeout_sec_)
+  {
+    lane_free_space_blocking = lane_free_space_blocking_;
+  }
+
   bool blocking_now = !have_pose_ || moving_src_.confirmed || static_src_.confirmed ||
-    camera_blocking;
+    camera_blocking || lane_free_space_blocking;
 
   if (blocking_now) {
     blocking_latched_ = true;

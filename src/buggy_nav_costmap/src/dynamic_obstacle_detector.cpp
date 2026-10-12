@@ -1,11 +1,13 @@
 #include "buggy_nav_costmap/dynamic_obstacle_detector.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <deque>
 #include <limits>
 #include <unordered_set>
 
+#include <geometry_msgs/msg/point.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 
 namespace buggy_nav_costmap
@@ -33,6 +35,9 @@ DynamicObstacleDetector::DynamicObstacleDetector()
   moving_color_g_ = declare_parameter("moving_color_g", 0);
   moving_color_b_ = declare_parameter("moving_color_b", 255);
   process_rate_hz_ = declare_parameter("process_rate_hz", 10.0);
+  max_track_jump_m_ = declare_parameter("max_track_jump_m", 2.0);
+  max_missed_cycles_ = declare_parameter("max_missed_cycles", 5);
+  prediction_horizon_sec_ = declare_parameter("prediction_horizon_sec", 2.0);
 
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -53,6 +58,8 @@ DynamicObstacleDetector::DynamicObstacleDetector()
     "/moving_obstacle_points", 1);
   static_points_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
     "/static_obstacle_points", 1);
+  tracking_markers_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
+    "/moving_object_tracking", 1);
 
   timer_ = create_wall_timer(
     std::chrono::duration<double>(1.0 / process_rate_hz_),
@@ -420,6 +427,212 @@ void DynamicObstacleDetector::processCycle()
 
   publishMovingPoints(stamp, moving_points);
   publishStaticPoints(stamp, static_points);
+
+  auto centroids = computeBlobCentroids(moving_cells, current_points);
+  updateTracks(stamp, centroids);
+  publishTrackingMarkers(stamp);
+}
+
+std::vector<DynamicObstacleDetector::Point3> DynamicObstacleDetector::computeBlobCentroids(
+  const std::unordered_set<int64_t> & moving_cells,
+  const std::vector<Point3> & current_points) const
+{
+  // Per-cell point lists, so each blob's centroid is a mean over RAW
+  // points (not cell centers) - same source data the flood fill below
+  // walks, just grouped for an easy per-blob sum.
+  std::unordered_map<int64_t, std::vector<const Point3 *>> cell_points;
+  for (const auto & p : current_points) {
+    int64_t key = cellKey(p.x, p.y);
+    if (moving_cells.count(key)) {
+      cell_points[key].push_back(&p);
+    }
+  }
+
+  std::vector<Point3> centroids;
+  std::unordered_set<int64_t> visited;
+  visited.reserve(moving_cells.size());
+
+  for (const auto & start_key : moving_cells) {
+    if (visited.count(start_key)) {
+      continue;
+    }
+    std::deque<int64_t> queue;
+    queue.push_back(start_key);
+    visited.insert(start_key);
+    double sum_x = 0.0, sum_y = 0.0, sum_z = 0.0;
+    int n = 0;
+
+    while (!queue.empty()) {
+      int64_t key = queue.front();
+      queue.pop_front();
+      auto it = cell_points.find(key);
+      if (it != cell_points.end()) {
+        for (const auto * p : it->second) {
+          sum_x += p->x; sum_y += p->y; sum_z += p->z;
+          ++n;
+        }
+      }
+      int cx, cy;
+      cellKeyToCoords(key, cx, cy);
+      for (int dx = -1; dx <= 1; ++dx) {
+        for (int dy = -1; dy <= 1; ++dy) {
+          if (dx == 0 && dy == 0) {
+            continue;
+          }
+          int64_t nkey =
+            (static_cast<int64_t>(cx + dx) << 32) ^ (static_cast<uint32_t>(cy + dy));
+          if (moving_cells.count(nkey) && !visited.count(nkey)) {
+            visited.insert(nkey);
+            queue.push_back(nkey);
+          }
+        }
+      }
+    }
+
+    if (n > 0) {
+      centroids.push_back({sum_x / n, sum_y / n, sum_z / n});
+    }
+  }
+  return centroids;
+}
+
+void DynamicObstacleDetector::updateTracks(
+  const rclcpp::Time & stamp, const std::vector<Point3> & centroids)
+{
+  std::vector<bool> matched(tracks_.size(), false);
+
+  for (const auto & c : centroids) {
+    // Nearest existing (not-yet-matched-this-cycle) track within
+    // max_track_jump_m_ - see this class's own header "TRACKING" comment.
+    int best_i = -1;
+    double best_d2 = max_track_jump_m_ * max_track_jump_m_;
+    for (size_t i = 0; i < tracks_.size(); ++i) {
+      if (matched[i]) {
+        continue;
+      }
+      double dx = c.x - tracks_[i].x, dy = c.y - tracks_[i].y;
+      double d2 = dx * dx + dy * dy;
+      if (d2 <= best_d2) {
+        best_d2 = d2;
+        best_i = static_cast<int>(i);
+      }
+    }
+
+    if (best_i >= 0) {
+      Track & t = tracks_[best_i];
+      double dt = (stamp - t.last_update).seconds();
+      // processCycle() already guarantees dt > 0 (its own top-of-function
+      // sim-stall guard) whenever this runs at all, but a dt near zero
+      // would still divide a small (even noise-level) displacement into
+      // an amplified, bogus velocity - 0.05s is half this node's own
+      // nominal 10Hz cycle period, so a normal cycle always clears it;
+      // only an abnormally-fast re-match would be skipped (keeping the
+      // track's previous velocity estimate rather than replacing it with
+      // a noisy one).
+      if (dt > 0.05) {
+        t.vx = (c.x - t.x) / dt;
+        t.vy = (c.y - t.y) / dt;
+        t.has_velocity = true;
+      }
+      t.x = c.x; t.y = c.y;
+      t.last_update = stamp;
+      t.missed_cycles = 0;
+      matched[best_i] = true;
+    } else {
+      Track nt;
+      nt.id = next_track_id_++;
+      nt.x = c.x; nt.y = c.y;
+      nt.last_update = stamp;
+      tracks_.push_back(nt);
+      matched.push_back(true);
+    }
+  }
+
+  for (size_t i = 0; i < tracks_.size(); ++i) {
+    if (!matched[i]) {
+      tracks_[i].missed_cycles += 1;
+    }
+  }
+  tracks_.erase(
+    std::remove_if(
+      tracks_.begin(), tracks_.end(),
+      [this](const Track & t) { return t.missed_cycles > max_missed_cycles_; }),
+    tracks_.end());
+}
+
+void DynamicObstacleDetector::publishTrackingMarkers(const rclcpp::Time & stamp)
+{
+  visualization_msgs::msg::MarkerArray array;
+  visualization_msgs::msg::Marker clear;
+  clear.header.frame_id = fixed_frame_;
+  clear.header.stamp = stamp;
+  clear.ns = "moving_object_tracking";
+  clear.action = visualization_msgs::msg::Marker::DELETEALL;
+  array.markers.push_back(clear);
+
+  int next_id = 0;
+  for (const auto & t : tracks_) {
+    if (!t.has_velocity) {
+      continue;  // First sighting only - no velocity to show yet.
+    }
+    double speed = std::hypot(t.vx, t.vy);
+
+    visualization_msgs::msg::Marker arrow;
+    arrow.header.frame_id = fixed_frame_;
+    arrow.header.stamp = stamp;
+    arrow.ns = "moving_object_tracking";
+    arrow.id = next_id++;
+    arrow.type = visualization_msgs::msg::Marker::ARROW;
+    arrow.action = visualization_msgs::msg::Marker::ADD;
+    geometry_msgs::msg::Point start, end;
+    start.x = t.x; start.y = t.y; start.z = 0.3;
+    end.x = t.x + t.vx; end.y = t.y + t.vy; end.z = 0.3;  // 1s-ahead arrow length
+    arrow.points = {start, end};
+    arrow.scale.x = 0.15; arrow.scale.y = 0.3; arrow.scale.z = 0.3;
+    arrow.color.r = 1.0f; arrow.color.g = 0.6f; arrow.color.b = 0.0f; arrow.color.a = 0.95f;
+    array.markers.push_back(arrow);
+
+    visualization_msgs::msg::Marker text;
+    text.header.frame_id = fixed_frame_;
+    text.header.stamp = stamp;
+    text.ns = "moving_object_tracking";
+    text.id = next_id++;
+    text.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+    text.action = visualization_msgs::msg::Marker::ADD;
+    text.pose.position.x = t.x;
+    text.pose.position.y = t.y;
+    text.pose.position.z = 1.0;
+    text.pose.orientation.w = 1.0;
+    text.scale.z = 0.35;
+    text.color.r = 1.0f; text.color.g = 1.0f; text.color.b = 1.0f; text.color.a = 1.0f;
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.1f m/s", speed);
+    text.text = buf;
+    array.markers.push_back(text);
+
+    visualization_msgs::msg::Marker path;
+    path.header.frame_id = fixed_frame_;
+    path.header.stamp = stamp;
+    path.ns = "moving_object_tracking";
+    path.id = next_id++;
+    path.type = visualization_msgs::msg::Marker::LINE_STRIP;
+    path.action = visualization_msgs::msg::Marker::ADD;
+    path.pose.orientation.w = 1.0;
+    path.scale.x = 0.08;
+    path.color.r = 1.0f; path.color.g = 0.6f; path.color.b = 0.0f; path.color.a = 0.5f;
+    const int kPredictionPoints = 8;
+    for (int i = 0; i <= kPredictionPoints; ++i) {
+      double dt = prediction_horizon_sec_ * i / kPredictionPoints;
+      geometry_msgs::msg::Point p;
+      p.x = t.x + t.vx * dt;
+      p.y = t.y + t.vy * dt;
+      p.z = 0.25;
+      path.points.push_back(p);
+    }
+    array.markers.push_back(path);
+  }
+
+  tracking_markers_pub_->publish(array);
 }
 
 }  // namespace buggy_nav_costmap
