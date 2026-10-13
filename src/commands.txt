@@ -60,3 +60,161 @@ ros2 launch buggy_mapping localize.launch.py map_name:=my_map2 ground_filter_dev
 # real
 ros2 launch buggy_mapping real_localize.launch.py \
   feedback_port:=/dev/ttyUSB0 rviz:=true ground_filter:=true map_name:=my_map2 ground_filter_device:=segment
+
+
+
+
+oct13 ::::::
+
+Rebuilt and verified against the current (reverted) source — here's the complete, accurate arg list for both.
+
+Sim (Gazebo)
+
+# Terminal 1 - Gazebo + localization
+ros2 launch buggy_mapping localize.launch.py \
+  world_file:=office_track.world \
+  spawn_x:=0.0 spawn_y:=-3.0 spawn_yaw:=0.0 \
+  gui:=true rviz:=true \
+  ground_filter:=true ground_filter_device:=gpu \
+  map_name:=my_map2 \
+  enable_kiss_icp:=false \
+  lidar_tilt_deg:=0.0 \
+  world:=/opt/ros/humble/share/gazebo_ros/worlds/empty.world
+
+# Terminal 2 - costmap planner + LiDAR moving-obstacle detector + ahead-zone stop gate
+ros2 launch buggy_nav_costmap costmap_navigate.launch.py \
+  use_sim_time:=true \
+  enable_moving_obstacle_stop:=true \
+  lane_lookahead:=12.0 \
+  steering_lookahead_distance:=4.0 \
+  max_obstacle_height_ft:=5.0
+
+# Terminal 3 - steering command (not started by Terminal 2)
+ros2 run buggy_perception steering_calculator_node
+
+# Terminal 4 - sim actuation bridge (not started by Terminal 2)
+ros2 run buggy_nav sim_ackermann_bridge
+
+# Terminal 5 - confirm alignment, then press g
+ros2 run buggy_perception manual_pose_aligner
+ground_filter_device also accepts segment here (CPU, no-GPU backend) even though it's not in every file's own --show-args text.
+
+Real hardware
+
+# Terminal 1 - real sensors + localization
+ros2 launch buggy_mapping real_localize.launch.py \
+  feedback_port:=/dev/ttyUSB0 \
+  rviz:=true \
+  ground_filter:=true ground_filter_device:=gpu \
+  map_name:=my_map2 \
+  enable_kiss_icp:=false \
+  camera:=false camera_device:=/dev/video0 \
+  radar:=false \
+  camera_lidar_fusion:=false
+
+# Terminal 2 - planner + detector + ahead-zone stop gate + steering_calculator + uart_sender
+ros2 launch buggy_nav_costmap real_costmap_navigate.launch.py \
+  sender_port:=/dev/ttyUSB0 \
+  loopback:=true \
+  speed_kmh:=4.0 \
+  lane_lookahead:=12.0 \
+  steering_lookahead_distance:=4.0 \
+  max_obstacle_height_ft:=5.0
+
+# Terminal 3 - confirm alignment, then press g
+ros2 run buggy_perception manual_pose_aligner
+Notes:
+
+loopback:=true (default) = nothing written to the serial port. Only set loopback:=false after confirming /final_red_detected and /steering_angle on the bench, wheels off the ground.
+speed_kmh only matters on either side of the 3.0 km/h cutoff (2 km/h vs 4 km/h preset) — there's no third preset.
+camera:=true camera_lidar_fusion:=true additionally brings in the camera-fusion stop input (needs the camera actually attached at camera_device).
+All values shown are the current defaults — you only need to pass the ones you want to change from default.
+
+
+what are the availabel argument give me that too
+2:29 PM
+Here's the full reference list of every argument per launch file (same data I just verified, presented as a plain list this time).
+
+Sim — localize.launch.py
+Arg	Default	Meaning
+world_file	office_track.world	Must match what was mapped
+spawn_x	0.0	Spawn X (must match recorded map origin)
+spawn_y	-3.0	Spawn Y
+spawn_yaw	0.0	Spawn yaw
+gui	true	Gazebo GUI on/off
+rviz	true	Launch RViz
+ground_filter	true	Run segment_ground; false = raw points to self_hit_filter
+ground_filter_device	gpu	gpu/cpu/segment backend for segment_ground
+map_name	my_map2	Map basename under buggy_mapping/maps/
+enable_kiss_icp	false	Use LiDAR scan-registration odometry instead of wheel odom
+model	buggy xacro path	Robot URDF/xacro
+lidar_tilt_deg	0.0	Downward LiDAR tilt
+world	empty.world	Absolute path to a Gazebo .world file
+Sim — costmap_navigate.launch.py
+Arg	Default	Meaning
+params_file	costmap_lane_planner_params.yaml path	Planner params override
+use_sim_time	true	
+enable_moving_obstacle_stop	false	Turns on the LiDAR moving-obstacle detector + stop gate
+dynamic_obstacle_detector_params_file	its yaml path	
+path_obstacle_monitor_params_file	its yaml path	
+lane_lookahead	12.0	How far ahead (m) each candidate arc is checked
+steering_lookahead_distance	4.0	How far along the lane the steering target sits
+max_obstacle_height_ft	5.0	Ignore LiDAR points taller than this above ground
+Real — real_localize.launch.py
+Arg	Default	Meaning
+feedback_port	/dev/ttyUSB0	Wheel/UART feedback serial port
+rviz	true	
+ground_filter	true	
+ground_filter_device	gpu	gpu/cpu/segment
+map_name	my_map2	
+enable_kiss_icp	false	
+camera	false	Launch camera_raw_node
+camera_device	/dev/video0	
+radar	false	Launch smart_radar (UMRR-A4)
+camera_lidar_fusion	false	Camera+LiDAR distance-based stop signal
+device	/dev/video0	Camera device (camera-node-level, duplicate of camera_device)
+capture_width / capture_height	1920 / 1080	Camera native capture resolution
+fps	30	
+output_width / output_height	960 / 540	Published (GPU-scaled) resolution
+topic_name	camera/image_raw	
+Real — real_costmap_navigate.launch.py
+Arg	Default	Meaning
+sender_port	/dev/ttyUSB0	MCU serial port
+loopback	true	true = nothing written to serial (safe default)
+speed_kmh	4.0	<=3.0 → 2 km/h preset, >3.0 → 4 km/h preset (only two presets exist)
+lane_lookahead	12.0	
+steering_lookahead_distance	4.0	
+max_obstacle_height_ft	5.0	
+Only pass the ones you want to change — everything else uses the default shown.
+
+
+
+do we have an argument to increase the distance of that stop marker ahead marker ?
+2:33 PM
+Not currently — ahead_zone_length_m only lives in path_obstacle_monitor_params.yaml (default 5.0m) right now; neither launch file exposes it as a command-line arg. Let me check the exact current wiring and add it to both.
+
+
+
+2:33 PM
+Now the real-hardware launch file.
+
+
+
+2:34 PM
+Now rebuild and verify.
+
+
+
+2:34 PM
+Done — both launch files now expose it.
+
+
+ahead_zone_length_m:=8.0   # default 5.0 — bump this to make the stop/ahead marker reach further
+Works on both:
+
+
+ros2 launch buggy_nav_costmap costmap_navigate.launch.py enable_moving_obstacle_stop:=true ahead_zone_length_m:=8.0
+ros2 launch buggy_nav_costmap real_costmap_navigate.launch.py sender_port:=/dev/ttyUSB0 ahead_zone_length_m:=8.0
+One thing to keep in mind when you increase it: lane_lookahead (default 12.0) is how far /suggested_lane itself extends — the bent-corridor fix only bends up to wherever that path reaches. If you push ahead_zone_length_m close to or past lane_lookahead, the zone's far end will run past the available path and fall back to extending straight in the last segment's direction (the short-path handling from the bend fix), so for a meaningfully longer zone you'll probably want to raise lane_lookahead too, e.g. lane_lookahead:=15.0 alongside ahead_zone_length_m:=8.0.
+
+Rebuilt and verified — --show-args confirms it's live on both sim and real.

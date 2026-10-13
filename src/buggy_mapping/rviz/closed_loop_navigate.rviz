@@ -65,13 +65,29 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: true
+        base_footprint:
+          Value: true
         base_link:
+          Value: true
+        front_left_steer_link:
+          Value: true
+        front_right_steer_link:
+          Value: true
+        gps_mount_link:
+          Value: true
+        imu_mount_link:
+          Value: true
+        lidar_mount_link:
           Value: true
         map:
           Value: true
         odom:
           Value: true
-        velodyne:
+        rear_left_wheel_link:
+          Value: true
+        rear_right_wheel_link:
+          Value: true
+        umrr:
           Value: true
       Marker Scale: 1
       Name: TF
@@ -82,7 +98,21 @@ Visualization Manager:
         map:
           odom:
             base_link:
-              velodyne:
+              front_left_steer_link:
+                {}
+              front_right_steer_link:
+                {}
+              gps_mount_link:
+                {}
+              imu_mount_link:
+                {}
+              lidar_mount_link:
+                {}
+              rear_left_wheel_link:
+                {}
+              rear_right_wheel_link:
+                {}
+              umrr:
                 {}
       Update Interval: 0
       Value: true
@@ -300,7 +330,7 @@ Visualization Manager:
         Value: /goal_marker
       Value: true
     - Class: rviz_default_plugins/Marker
-      Enabled: true
+      Enabled: false
       Name: Carrot Marker
       Namespaces:
         {}
@@ -311,7 +341,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /carrot_marker
-      Value: true
+      Value: false
     - Class: rviz_default_plugins/Marker
       Enabled: true
       Name: Steering Telemetry
@@ -329,7 +359,7 @@ Visualization Manager:
       Enabled: true
       Name: Turn Direction
       Namespaces:
-        {}
+        turn_direction: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -342,7 +372,7 @@ Visualization Manager:
       Enabled: true
       Name: Route Preview
       Namespaces:
-        {}
+        route_preview_path: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -368,7 +398,7 @@ Visualization Manager:
       Enabled: true
       Name: Nearest Vertex Search Radius
       Namespaces:
-        {}
+        nearest_vertex_search_radius: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -381,7 +411,7 @@ Visualization Manager:
       Enabled: true
       Name: Nearest Pose Graph Vertex
       Namespaces:
-        {}
+        nearest_pose_graph_vertex: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -394,7 +424,7 @@ Visualization Manager:
       Enabled: true
       Name: Suggested Lane (Costmap)
       Namespaces:
-        {}
+        suggested_lane: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -407,7 +437,7 @@ Visualization Manager:
       Enabled: true
       Name: Obstacle Area
       Namespaces:
-        {}
+        obstacle_area: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -420,7 +450,7 @@ Visualization Manager:
       Enabled: true
       Name: Free Lane Area
       Namespaces:
-        {}
+        free_lane_area: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -431,9 +461,22 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/Marker
       Enabled: true
+      Name: Lane Free Space Area
+      Namespaces:
+        lane_free_space_area: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /lane_free_space_area
+      Value: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
       Name: Ahead Zone
       Namespaces:
-        {}
+        ahead_zone: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -443,7 +486,7 @@ Visualization Manager:
         Value: /ahead_zone_marker
       Value: true
     - Class: rviz_default_plugins/Marker
-      Enabled: true
+      Enabled: false
       Name: Golden Lane
       Namespaces:
         {}
@@ -454,7 +497,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /golden_lane_marker
-      Value: true
+      Value: false
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
       Name: Lane Candidates
@@ -513,9 +556,9 @@ Visualization Manager:
       Channel Name: intensity
       Class: rviz_default_plugins/PointCloud2
       Color: 255; 255; 255
-      Color Transformer: RGB8
+      Color Transformer: Intensity
       Decay Time: 0
-      Enabled: true
+      Enabled: false
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Max Intensity: 4096
@@ -525,7 +568,7 @@ Visualization Manager:
       Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 3
-      Size (m): 0.03999999910593033
+      Size (m): 0.8999999761581421
       Style: Flat Squares
       Topic:
         Depth: 5
@@ -533,10 +576,10 @@ Visualization Manager:
         Filter size: 10
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /ground_points
+        Value: /non_ground_points_filtered
       Use Fixed Frame: true
       Use rainbow: true
-      Value: true
+      Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -549,7 +592,7 @@ Visualization Manager:
       Color: 255; 255; 255
       Color Transformer: Intensity
       Decay Time: 0
-      Enabled: true
+      Enabled: false
       Invert Rainbow: false
       Max Color: 255; 255; 255
       Max Intensity: 4096
@@ -570,7 +613,7 @@ Visualization Manager:
         Value: /smart_radar/can_targets_0
       Use Fixed Frame: true
       Use rainbow: true
-      Value: true
+      Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
@@ -586,9 +629,9 @@ Visualization Manager:
       Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
-      Max Intensity: 100
+      Max Intensity: 0
       Min Color: 0; 0; 0
-      Min Intensity: 1
+      Min Intensity: 0
       Name: PointCloud2
       Position Transformer: XYZ
       Selectable: true

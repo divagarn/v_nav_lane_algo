@@ -91,6 +91,12 @@ def generate_launch_description():
                     'obstacles (overhead signage, branches, etc.) - converted here into '
                     "max_obstacle_height's own sensor-frame meters (ft*0.3048 - 1.0, the "
                     'LiDAR mounting height).')
+    ahead_zone_length_m_arg = DeclareLaunchArgument(
+        'ahead_zone_length_m', default_value='5.0',
+        description="Length (m) of path_obstacle_monitor_node's ahead-zone stop gate (the "
+                    'box shown green when clear, red when an obstacle is inside it). Must '
+                    'exceed braking distance at the commanded speed plus sensor/actuation '
+                    'latency.')
 
     # When the feature is off this still resolves to the yaml's own
     # default (/non_ground_points_filtered) - a harmless no-op override,
@@ -141,7 +147,11 @@ def generate_launch_description():
         output='screen',
         parameters=[
             LaunchConfiguration('path_obstacle_monitor_params_file'),
-            {'use_sim_time': LaunchConfiguration('use_sim_time')},
+            {
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
+                'ahead_zone_length_m': ParameterValue(
+                    LaunchConfiguration('ahead_zone_length_m'), value_type=float),
+            },
         ],
         condition=IfCondition(LaunchConfiguration('enable_moving_obstacle_stop')),
     )
@@ -155,6 +165,7 @@ def generate_launch_description():
         lane_lookahead_arg,
         steering_lookahead_distance_arg,
         max_obstacle_height_ft_arg,
+        ahead_zone_length_m_arg,
         costmap_lane_planner,
         dynamic_obstacle_detector,
         path_obstacle_monitor,
