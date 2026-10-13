@@ -38,6 +38,8 @@ DynamicObstacleDetector::DynamicObstacleDetector()
   max_track_jump_m_ = declare_parameter("max_track_jump_m", 2.0);
   max_missed_cycles_ = declare_parameter("max_missed_cycles", 5);
   prediction_horizon_sec_ = declare_parameter("prediction_horizon_sec", 2.0);
+  min_confirm_cycles_ = declare_parameter("min_confirm_cycles", 3);
+  min_confirm_displacement_m_ = declare_parameter("min_confirm_displacement_m", 0.3);
 
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -415,10 +417,22 @@ void DynamicObstacleDetector::processCycle()
 
   moving_cells = filterSmallBlobs(moving_cells, current_grid);
 
+  // Tracking + confirmation BEFORE the point-output split below - see
+  // Track's own comment: density+shape filtering alone can't tell a
+  // vehicle/pedestrian apart from shaking foliage or anything else that's
+  // merely new/transient, only sustained net displacement over several
+  // cycles can. Everything not in the returned confirmed set (including
+  // every not-yet-confirmed moving blob) is published as static - the same
+  // safe default this node already uses for "undecided": nothing is ever
+  // hidden from the ahead-zone stop gate or path selection, it's just not
+  // yet trusted for the moving-specific stop-and-resume-same-path feature.
+  auto blobs = computeBlobs(moving_cells, current_points);
+  auto confirmed_moving_cells = updateTracks(stamp, blobs);
+
   std::vector<Point3> moving_points, static_points;
-  moving_points.reserve(moving_cells.size());
+  moving_points.reserve(confirmed_moving_cells.size());
   for (const auto & p : current_points) {
-    if (moving_cells.count(cellKey(p.x, p.y))) {
+    if (confirmed_moving_cells.count(cellKey(p.x, p.y))) {
       moving_points.push_back(p);
     } else {
       static_points.push_back(p);
@@ -427,13 +441,10 @@ void DynamicObstacleDetector::processCycle()
 
   publishMovingPoints(stamp, moving_points);
   publishStaticPoints(stamp, static_points);
-
-  auto centroids = computeBlobCentroids(moving_cells, current_points);
-  updateTracks(stamp, centroids);
   publishTrackingMarkers(stamp);
 }
 
-std::vector<DynamicObstacleDetector::Point3> DynamicObstacleDetector::computeBlobCentroids(
+std::vector<DynamicObstacleDetector::Blob> DynamicObstacleDetector::computeBlobs(
   const std::unordered_set<int64_t> & moving_cells,
   const std::vector<Point3> & current_points) const
 {
@@ -448,7 +459,7 @@ std::vector<DynamicObstacleDetector::Point3> DynamicObstacleDetector::computeBlo
     }
   }
 
-  std::vector<Point3> centroids;
+  std::vector<Blob> blobs;
   std::unordered_set<int64_t> visited;
   visited.reserve(moving_cells.size());
 
@@ -459,12 +470,14 @@ std::vector<DynamicObstacleDetector::Point3> DynamicObstacleDetector::computeBlo
     std::deque<int64_t> queue;
     queue.push_back(start_key);
     visited.insert(start_key);
+    std::unordered_set<int64_t> blob_cells;
     double sum_x = 0.0, sum_y = 0.0, sum_z = 0.0;
     int n = 0;
 
     while (!queue.empty()) {
       int64_t key = queue.front();
       queue.pop_front();
+      blob_cells.insert(key);
       auto it = cell_points.find(key);
       if (it != cell_points.end()) {
         for (const auto * p : it->second) {
@@ -490,18 +503,23 @@ std::vector<DynamicObstacleDetector::Point3> DynamicObstacleDetector::computeBlo
     }
 
     if (n > 0) {
-      centroids.push_back({sum_x / n, sum_y / n, sum_z / n});
+      blobs.push_back({{sum_x / n, sum_y / n, sum_z / n}, std::move(blob_cells)});
     }
   }
-  return centroids;
+  return blobs;
 }
 
-void DynamicObstacleDetector::updateTracks(
-  const rclcpp::Time & stamp, const std::vector<Point3> & centroids)
+std::unordered_set<int64_t> DynamicObstacleDetector::updateTracks(
+  const rclcpp::Time & stamp, const std::vector<Blob> & blobs)
 {
   std::vector<bool> matched(tracks_.size(), false);
+  // Which track (by index into tracks_) each input blob ended up matched
+  // to/spawning - needed after the loop below to know which blobs'
+  // cells to include in the confirmed-cells result.
+  std::vector<int> blob_track_index(blobs.size(), -1);
 
-  for (const auto & c : centroids) {
+  for (size_t bi = 0; bi < blobs.size(); ++bi) {
+    const Point3 & c = blobs[bi].centroid;
     // Nearest existing (not-yet-matched-this-cycle) track within
     // max_track_jump_m_ - see this class's own header "TRACKING" comment.
     int best_i = -1;
@@ -537,14 +555,40 @@ void DynamicObstacleDetector::updateTracks(
       t.x = c.x; t.y = c.y;
       t.last_update = stamp;
       t.missed_cycles = 0;
+      t.age_cycles += 1;
       matched[best_i] = true;
+      blob_track_index[bi] = best_i;
     } else {
       Track nt;
       nt.id = next_track_id_++;
       nt.x = c.x; nt.y = c.y;
+      nt.origin_x = c.x; nt.origin_y = c.y;
+      nt.age_cycles = 1;
       nt.last_update = stamp;
       tracks_.push_back(nt);
       matched.push_back(true);
+      blob_track_index[bi] = static_cast<int>(tracks_.size()) - 1;
+    }
+  }
+
+  // Confirmation + the resulting cell set MUST be built before the erase
+  // below - erase() can shift the vector positions of surviving tracks
+  // (never the just-matched ones themselves, since they all have
+  // missed_cycles==0 this cycle, but their INDEX can still move if an
+  // unmatched, stale track earlier in the vector gets removed), which
+  // would make blob_track_index's indices stale.
+  std::unordered_set<int64_t> confirmed_moving_cells;
+  for (size_t bi = 0; bi < blobs.size(); ++bi) {
+    int ti = blob_track_index[bi];
+    Track & t = tracks_[ti];
+    if (!t.confirmed && t.age_cycles >= min_confirm_cycles_) {
+      double net = std::hypot(t.x - t.origin_x, t.y - t.origin_y);
+      if (net >= min_confirm_displacement_m_) {
+        t.confirmed = true;
+      }
+    }
+    if (t.confirmed) {
+      confirmed_moving_cells.insert(blobs[bi].cells.begin(), blobs[bi].cells.end());
     }
   }
 
@@ -558,6 +602,8 @@ void DynamicObstacleDetector::updateTracks(
       tracks_.begin(), tracks_.end(),
       [this](const Track & t) { return t.missed_cycles > max_missed_cycles_; }),
     tracks_.end());
+
+  return confirmed_moving_cells;
 }
 
 void DynamicObstacleDetector::publishTrackingMarkers(const rclcpp::Time & stamp)

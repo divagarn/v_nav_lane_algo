@@ -79,8 +79,8 @@ dynamic_obstacle_detector:
     # label + predicted-trajectory line per tracked object, Autoware-
     # style) - see this node's own "TRACKING" header comment for the two
     # failure modes an earlier, reverted attempt hit and how these guard
-    # against them. Informational only - does not feed into
-    # /moving_obstacle_points, /static_obstacle_points, or any stop logic.
+    # against them. ALSO gates /moving_obstacle_points itself now (see
+    # CONFIRMATION below) - no longer informational-only.
     #
     # A detected object beyond this of every existing track's last known
     # position spawns a NEW track rather than updating one.
@@ -89,3 +89,20 @@ dynamic_obstacle_detector:
     max_missed_cycles: 5
     # How far ahead (seconds) the predicted-trajectory line extends.
     prediction_horizon_sec: 2.0
+
+    # CONFIRMATION - vehicles/pedestrians only, not shaking tree leaves,
+    # wind-blown debris, or sensor jitter. The density+shape filtering
+    # above only proves a blob is new/transient; something jittering in
+    # place passes that just as well as something translating does, from
+    # one cycle's density alone. Sustained net displacement over several
+    # cycles is what actually tells them apart - in-place jitter
+    # oscillates back toward its own origin and never accumulates
+    # distance, no matter how long it keeps triggering the density check.
+    # A track only counts as a confirmed real mover (and only then does
+    # its blob get published on /moving_obstacle_points, rather than
+    # /static_obstacle_points) once matched for min_confirm_cycles
+    # consecutive cycles AND its straight-line distance from where it was
+    # FIRST seen exceeds min_confirm_displacement_m. Defaults confirm a
+    # walking pedestrian (~1 m/s) in well under half a second.
+    min_confirm_cycles: 3
+    min_confirm_displacement_m: 0.3

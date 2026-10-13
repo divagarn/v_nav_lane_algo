@@ -92,10 +92,25 @@ namespace buggy_nav_costmap
 // Published as /moving_object_tracking (MarkerArray): a velocity arrow +
 // speed-label text + predicted-trajectory line per track with a valid
 // velocity estimate (a brand-new track has none yet - first sighting
-// only gives a position). Pure additional output; does not change what
-// /moving_obstacle_points or /static_obstacle_points contain, and
-// nothing downstream (path_obstacle_monitor_node's stop gate, costmap_
-// lane_planner) consumes it - this is informational only for now.
+// only gives a position).
+//
+// CONFIRMATION (vehicles/pedestrians only, not shaking leaves/wind-blown
+// debris/sensor jitter): a track only counts as a real mover - and only
+// THEN does its blob's points get published on /moving_obstacle_points -
+// once it's been matched for min_confirm_cycles_ consecutive cycles AND
+// its net straight-line displacement from where it was first seen exceeds
+// min_confirm_displacement_m_. The density+shape filtering above only
+// proves a blob is new/transient, which something jittering in place
+// (leaves, a flag, grass) satisfies just as well as a translating object
+// does from a single cycle's density alone - sustained net displacement
+// over several cycles is the one signal that actually tells them apart,
+// since in-place jitter oscillates back toward its own origin and never
+// accumulates distance no matter how long it keeps triggering the per-
+// cell density check. An unconfirmed blob's points are published as
+// STATIC, not dropped - the same safe default this node already uses for
+// "undecided": they still block the ahead-zone stop gate and path
+// selection, they're just not yet trusted for the moving-specific stop-
+// and-resume-same-path behavior. Confirmation never un-sets once reached.
 class DynamicObstacleDetector : public rclcpp::Node
 {
 public:
@@ -127,6 +142,23 @@ private:
     bool has_velocity = false;  // false until a second sighting confirms one
     rclcpp::Time last_update;
     int missed_cycles = 0;
+    // CONFIRMATION (see this class's own header comment) - origin_x/y is
+    // this track's first-ever centroid, age_cycles counts matched sightings
+    // since then. confirmed only ever flips false->true, never back - once
+    // a real mover, a brief missed-cycle gap shouldn't un-confirm it.
+    double origin_x = 0.0, origin_y = 0.0;
+    int age_cycles = 0;
+    bool confirmed = false;
+  };
+
+  // One connected blob of moving cells, with the cell keys belonging to it
+  // kept alongside the centroid - computeBlobs() flood-fills once and
+  // updateTracks() needs both (centroid for matching, cells for routing
+  // this blob's actual points once we know if its track got confirmed).
+  struct Blob
+  {
+    Point3 centroid;
+    std::unordered_set<int64_t> cells;
   };
 
   void cloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
@@ -148,19 +180,23 @@ private:
   int coverageCount(int64_t key) const;
   void publishMovingPoints(const rclcpp::Time & stamp, const std::vector<Point3> & moving_points);
   void publishStaticPoints(const rclcpp::Time & stamp, const std::vector<Point3> & static_points);
-  // One centroid per connected blob in the (already fully filtered) final
-  // moving_cells set - a second, cheap flood-fill pass purely to get
-  // per-object identity for tracking, same 8-connectivity idiom as
-  // filterSmallBlobs. Does not re-apply any size/extent filtering (that
-  // already happened).
-  std::vector<Point3> computeBlobCentroids(
+  // One Blob (centroid + cell set) per connected blob in the (already
+  // fully filtered) final moving_cells set - a second, cheap flood-fill
+  // pass purely to get per-object identity for tracking, same 8-
+  // connectivity idiom as filterSmallBlobs. Does not re-apply any
+  // size/extent filtering (that already happened).
+  std::vector<Blob> computeBlobs(
     const std::unordered_set<int64_t> & moving_cells,
     const std::vector<Point3> & current_points) const;
   // Nearest-centroid association gated by max_track_jump_m_, velocity
   // from consecutive matched sightings, missed-cycle pruning - see this
   // class's own header "TRACKING" comment for the two failure modes this
-  // specifically guards against.
-  void updateTracks(const rclcpp::Time & stamp, const std::vector<Point3> & centroids);
+  // specifically guards against. Returns the union of every blob's cells
+  // whose matched/spawned track is CONFIRMED (see Track's own comment) -
+  // processCycle() publishes only these cells as moving; everything else
+  // (unconfirmed blobs included) is treated as static.
+  std::unordered_set<int64_t> updateTracks(
+    const rclcpp::Time & stamp, const std::vector<Blob> & blobs);
   void publishTrackingMarkers(const rclcpp::Time & stamp);
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
@@ -239,6 +275,24 @@ private:
   int max_missed_cycles_ = 5;
   // How far ahead (seconds) the predicted-trajectory line extends.
   double prediction_horizon_sec_ = 2.0;
+
+  // CONFIRMATION (see Track's own comment) - the density-ratio+shape
+  // filtering above tells "this blob is new/transient", not "this blob is
+  // a vehicle/pedestrian specifically" - shaking tree leaves, a flag
+  // flapping, grass in wind all pass it too, since from one cycle's
+  // density alone a jitter-in-place blob looks identical to a translating
+  // one. The distinguishing signal is over TIME: a real mover accumulates
+  // net displacement cycle over cycle; something jittering in place
+  // oscillates back toward where it started, so its net displacement
+  // stays small no matter how long you watch it. A track only counts as
+  // confirmed once it's been matched for min_confirm_cycles_ consecutive
+  // cycles AND its straight-line distance from where it was FIRST seen
+  // exceeds min_confirm_displacement_m_ - defaults (3 cycles, 0.3m) confirm
+  // a walking pedestrian (~1m/s) in well under half a second while an
+  // in-place jitter never crosses the displacement bar at all, regardless
+  // of how long it keeps triggering the per-cell density check.
+  int min_confirm_cycles_ = 3;
+  double min_confirm_displacement_m_ = 0.3;
 };
 
 }  // namespace buggy_nav_costmap
