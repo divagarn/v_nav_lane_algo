@@ -36,6 +36,7 @@ DynamicObstacleDetector::DynamicObstacleDetector()
   moving_color_b_ = declare_parameter("moving_color_b", 255);
   process_rate_hz_ = declare_parameter("process_rate_hz", 10.0);
   max_track_jump_m_ = declare_parameter("max_track_jump_m", 2.0);
+  track_redetect_min_points_ = declare_parameter("track_redetect_min_points", 5);
   max_missed_cycles_ = declare_parameter("max_missed_cycles", 5);
   prediction_horizon_sec_ = declare_parameter("prediction_horizon_sec", 2.0);
   min_confirm_cycles_ = declare_parameter("min_confirm_cycles", 3);
@@ -417,22 +418,25 @@ void DynamicObstacleDetector::processCycle()
 
   moving_cells = filterSmallBlobs(moving_cells, current_grid);
 
-  // Tracking + confirmation BEFORE the point-output split below - see
-  // Track's own comment: density+shape filtering alone can't tell a
-  // vehicle/pedestrian apart from shaking foliage or anything else that's
-  // merely new/transient, only sustained net displacement over several
-  // cycles can. Everything not in the returned confirmed set (including
-  // every not-yet-confirmed moving blob) is published as static - the same
-  // safe default this node already uses for "undecided": nothing is ever
-  // hidden from the ahead-zone stop gate or path selection, it's just not
-  // yet trusted for the moving-specific stop-and-resume-same-path feature.
+  // Tracking decides the point-output split below, and it's deliberately
+  // NOT the same as this cycle's raw moving_cells - see updateTracks()'s
+  // own "STEP A" comment: once an object has a track, it stays excluded
+  // from /static_obstacle_points for as long as it's still physically
+  // there (re-detected by proximity to its own last position), regardless
+  // of what this cycle's density-ratio test alone would say. Without that,
+  // a stationary obstacle would silently graduate back onto
+  // /static_obstacle_points after history_length_ cycles and the planner
+  // could start replanning around it - exactly what this must never do.
+  // Confirmation (sustained net displacement, set inside updateTracks)
+  // still only matters for the /moving_object_tracking VISUALIZATION, not
+  // this split - see publishTrackingMarkers().
   auto blobs = computeBlobs(moving_cells, current_points);
-  auto confirmed_moving_cells = updateTracks(stamp, blobs);
+  auto exclude_cells = updateTracks(stamp, blobs, current_points);
 
   std::vector<Point3> moving_points, static_points;
-  moving_points.reserve(confirmed_moving_cells.size());
+  moving_points.reserve(exclude_cells.size());
   for (const auto & p : current_points) {
-    if (confirmed_moving_cells.count(cellKey(p.x, p.y))) {
+    if (exclude_cells.count(cellKey(p.x, p.y))) {
       moving_points.push_back(p);
     } else {
       static_points.push_back(p);
@@ -510,86 +514,98 @@ std::vector<DynamicObstacleDetector::Blob> DynamicObstacleDetector::computeBlobs
 }
 
 std::unordered_set<int64_t> DynamicObstacleDetector::updateTracks(
-  const rclcpp::Time & stamp, const std::vector<Blob> & blobs)
+  const rclcpp::Time & stamp, const std::vector<Blob> & new_blobs,
+  const std::vector<Point3> & current_points)
 {
+  std::unordered_set<int64_t> exclude_cells;
   std::vector<bool> matched(tracks_.size(), false);
-  // Which track (by index into tracks_) each input blob ended up matched
-  // to/spawning - needed after the loop below to know which blobs'
-  // cells to include in the confirmed-cells result.
-  std::vector<int> blob_track_index(blobs.size(), -1);
 
-  for (size_t bi = 0; bi < blobs.size(); ++bi) {
-    const Point3 & c = blobs[bi].centroid;
-    // Nearest existing (not-yet-matched-this-cycle) track within
-    // max_track_jump_m_ - see this class's own header "TRACKING" comment.
-    int best_i = -1;
-    double best_d2 = max_track_jump_m_ * max_track_jump_m_;
-    for (size_t i = 0; i < tracks_.size(); ++i) {
-      if (matched[i]) {
-        continue;
-      }
-      double dx = c.x - tracks_[i].x, dy = c.y - tracks_[i].y;
-      double d2 = dx * dx + dy * dy;
-      if (d2 <= best_d2) {
-        best_d2 = d2;
-        best_i = static_cast<int>(i);
-      }
-    }
-
-    if (best_i >= 0) {
-      Track & t = tracks_[best_i];
-      double dt = (stamp - t.last_update).seconds();
-      // processCycle() already guarantees dt > 0 (its own top-of-function
-      // sim-stall guard) whenever this runs at all, but a dt near zero
-      // would still divide a small (even noise-level) displacement into
-      // an amplified, bogus velocity - 0.05s is half this node's own
-      // nominal 10Hz cycle period, so a normal cycle always clears it;
-      // only an abnormally-fast re-match would be skipped (keeping the
-      // track's previous velocity estimate rather than replacing it with
-      // a noisy one).
-      if (dt > 0.05) {
-        t.vx = (c.x - t.x) / dt;
-        t.vy = (c.y - t.y) / dt;
-        t.has_velocity = true;
-      }
-      t.x = c.x; t.y = c.y;
-      t.last_update = stamp;
-      t.missed_cycles = 0;
-      t.age_cycles += 1;
-      matched[best_i] = true;
-      blob_track_index[bi] = best_i;
-    } else {
-      Track nt;
-      nt.id = next_track_id_++;
-      nt.x = c.x; nt.y = c.y;
-      nt.origin_x = c.x; nt.origin_y = c.y;
-      nt.age_cycles = 1;
-      nt.last_update = stamp;
-      tracks_.push_back(nt);
-      matched.push_back(true);
-      blob_track_index[bi] = static_cast<int>(tracks_.size()) - 1;
-    }
-  }
-
-  // Confirmation + the resulting cell set MUST be built before the erase
-  // below - erase() can shift the vector positions of surviving tracks
-  // (never the just-matched ones themselves, since they all have
-  // missed_cycles==0 this cycle, but their INDEX can still move if an
-  // unmatched, stale track earlier in the vector gets removed), which
-  // would make blob_track_index's indices stale.
-  std::unordered_set<int64_t> confirmed_moving_cells;
-  for (size_t bi = 0; bi < blobs.size(); ++bi) {
-    int ti = blob_track_index[bi];
+  // STEP A - re-detect each EXISTING track by proximity in the FULL
+  // current cloud, independent of this cycle's density-ratio
+  // classification. This is the reason a track, once alive, stays alive
+  // for as long as the physical object is still there, no matter how
+  // long: an obstacle that's been sitting still long enough corroborates
+  // its own presence across history_buffer_, which is exactly what the
+  // density ratio uses to call a cell "static" - without this step, a
+  // stationary obstacle would silently stop appearing in moving_cells
+  // after history_length_ cycles (~0.6s) and its track would go unmatched
+  // and get dropped, right as costmap_lane_planner started seeing it on
+  // /static_obstacle_points and could replan around it. Re-detection uses
+  // max_track_jump_m_ as a fixed search radius around the track's own
+  // last position - this project's speeds (walking pedestrian ~1m/s,
+  // vehicle a few km/h, 10Hz cycle) move well under a meter per cycle, so
+  // this comfortably keeps pace with genuine motion too, not just
+  // stationary objects.
+  double redetect_r2 = max_track_jump_m_ * max_track_jump_m_;
+  for (size_t ti = 0; ti < tracks_.size(); ++ti) {
     Track & t = tracks_[ti];
+    double sum_x = 0.0, sum_y = 0.0, sum_z = 0.0;
+    int n = 0;
+    std::unordered_set<int64_t> nearby_cells;
+    for (const auto & p : current_points) {
+      double dx = p.x - t.x, dy = p.y - t.y;
+      if (dx * dx + dy * dy <= redetect_r2) {
+        sum_x += p.x; sum_y += p.y; sum_z += p.z;
+        ++n;
+        nearby_cells.insert(cellKey(p.x, p.y));
+      }
+    }
+    if (n < track_redetect_min_points_) {
+      continue;  // nothing substantial nearby - leave unmatched, see missed_cycles below
+    }
+    double cx = sum_x / n, cy = sum_y / n;
+    double dt = (stamp - t.last_update).seconds();
+    // processCycle() already guarantees dt > 0 (its own top-of-function
+    // sim-stall guard) whenever this runs at all, but a dt near zero
+    // would still divide a small (even noise-level) displacement into an
+    // amplified, bogus velocity - 0.05s is half this node's own nominal
+    // 10Hz cycle period, so a normal cycle always clears it; only an
+    // abnormally-fast re-match would be skipped (keeping the track's
+    // previous velocity estimate rather than replacing it with a noisy
+    // one).
+    if (dt > 0.05) {
+      t.vx = (cx - t.x) / dt;
+      t.vy = (cy - t.y) / dt;
+      t.has_velocity = true;
+    }
+    t.x = cx; t.y = cy;
+    t.last_update = stamp;
+    t.missed_cycles = 0;
+    t.age_cycles += 1;
+    matched[ti] = true;
     if (!t.confirmed && t.age_cycles >= min_confirm_cycles_) {
       double net = std::hypot(t.x - t.origin_x, t.y - t.origin_y);
       if (net >= min_confirm_displacement_m_) {
         t.confirmed = true;
       }
     }
-    if (t.confirmed) {
-      confirmed_moving_cells.insert(blobs[bi].cells.begin(), blobs[bi].cells.end());
+    exclude_cells.insert(nearby_cells.begin(), nearby_cells.end());
+  }
+
+  // STEP B - spawn NEW tracks from this cycle's density-classified blobs
+  // (moving_cells, post shape/size filtering - see processCycle()), for
+  // whichever part of each blob ISN'T already claimed by an existing
+  // track's re-detection above (same physical object, already handled -
+  // skip it so one object doesn't spawn a second, duplicate track).
+  for (const auto & blob : new_blobs) {
+    size_t already_claimed = 0;
+    for (const auto & c : blob.cells) {
+      if (exclude_cells.count(c)) {
+        ++already_claimed;
+      }
     }
+    if (blob.cells.empty() || already_claimed * 2 >= blob.cells.size()) {
+      continue;  // mostly overlaps an already-re-detected track, not a new object
+    }
+    Track nt;
+    nt.id = next_track_id_++;
+    nt.x = blob.centroid.x; nt.y = blob.centroid.y;
+    nt.origin_x = blob.centroid.x; nt.origin_y = blob.centroid.y;
+    nt.age_cycles = 1;
+    nt.last_update = stamp;
+    tracks_.push_back(nt);
+    matched.push_back(true);
+    exclude_cells.insert(blob.cells.begin(), blob.cells.end());
   }
 
   for (size_t i = 0; i < tracks_.size(); ++i) {
@@ -603,7 +619,7 @@ std::unordered_set<int64_t> DynamicObstacleDetector::updateTracks(
       [this](const Track & t) { return t.missed_cycles > max_missed_cycles_; }),
     tracks_.end());
 
-  return confirmed_moving_cells;
+  return exclude_cells;
 }
 
 void DynamicObstacleDetector::publishTrackingMarkers(const rclcpp::Time & stamp)
@@ -620,6 +636,9 @@ void DynamicObstacleDetector::publishTrackingMarkers(const rclcpp::Time & stamp)
   for (const auto & t : tracks_) {
     if (!t.has_velocity) {
       continue;  // First sighting only - no velocity to show yet.
+    }
+    if (!t.confirmed) {
+      continue;  // Not yet proven to be a sustained mover - see Track's own comment.
     }
     double speed = std::hypot(t.vx, t.vy);
 

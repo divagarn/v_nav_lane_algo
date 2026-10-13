@@ -44,18 +44,23 @@ namespace buggy_nav_costmap
 // the identical role.
 //
 // Publishes TWO point clouds each cycle, both at full sensor resolution:
-// /moving_obstacle_points (colour-tinted, moving cells only - for RViz)
-// and /static_obstacle_points (plain XYZ, exact complement - everything
-// NOT classified moving this cycle, i.e. confidently static OR still
-// undecided). /static_obstacle_points exists specifically so
-// costmap_lane_planner can be pointed at it instead of the raw
-// obstacle_topic when path_obstacle_monitor_node is in the loop (see that
-// node's own header comment): path SELECTION then only ever reacts to
-// static obstacles, so a moving object crossing the chosen path can never
-// itself trigger a reroute - only path_obstacle_monitor_node's separate
-// stop/go gate reacts to it, and once it clears, the vehicle resumes
-// EXACTLY the path that was already being computed the whole time,
-// because that path's own obstacle input was never disturbed by it.
+// /moving_obstacle_points (colour-tinted - for RViz) and
+// /static_obstacle_points (plain XYZ, exact complement). The split is
+// decided by TRACKING below, not by this cycle's density-ratio
+// classification alone - a tracked obstacle stays on
+// /moving_obstacle_points for as long as it's still physically there, no
+// matter how long, not just while it still looks "new" by density.
+// /static_obstacle_points exists specifically so costmap_lane_planner can
+// be pointed at it instead of the raw obstacle_topic when
+// path_obstacle_monitor_node is in the loop (see that node's own header
+// comment): path SELECTION then only ever reacts to obstacles that were
+// never excluded as new/tracked, so ANY obstacle that appeared after the
+// vehicle started navigating - moving or sitting dead still, for a
+// fraction of a second or indefinitely - can never itself trigger a
+// reroute. Only path_obstacle_monitor_node's separate stop/go gate reacts
+// to it, and once it's gone, the vehicle resumes EXACTLY the path that
+// was already being computed the whole time, because that path's own
+// obstacle input was never disturbed by it.
 //
 // Moving cells are additionally grouped into contiguous blobs (8-
 // connectivity, same grid-hash flood-fill idiom used elsewhere in this
@@ -72,45 +77,71 @@ namespace buggy_nav_costmap
 // regardless of what was actually present, so that scan must not count
 // against it in the static_score denominator.
 //
-// TRACKING (velocity + predicted trajectory, Autoware-style): a second,
-// SEPARATE pass over the already-filtered moving blobs above - one
-// persistent Track per blob, matched frame-to-frame by nearest centroid
-// within max_track_jump_m_. This is the same category of feature this
-// class's own header comment above says was tried once already and
-// reverted for two confirmed failure modes - this version exists
-// specifically because both are now addressed structurally rather than
-// re-attempted as-is:
-//   1. Centroid jumping between frames: a detected centroid can only
-//      ever update an EXISTING track if it's within max_track_jump_m_ of
-//      that track's last position - too far away spawns a NEW track
-//      instead of being (wrongly) treated as "the same object moved
-//      that far in one cycle".
+// TRACKING (velocity + predicted trajectory, Autoware-style; also decides
+// the /moving_obstacle_points split - see above): one persistent Track
+// per physical object, kept alive two different ways depending on whether
+// it's brand new or already being tracked -
+//   STEP A - re-detect EXISTING tracks by proximity to their own last
+//     position in the FULL current cloud (updateTracks()'s own
+//     definition), independent of this cycle's density-ratio
+//     classification entirely. This is what makes exclusion PERMANENT for
+//     as long as the object is physically there: the density ratio that
+//     first flagged an obstacle "new" naturally rises back toward
+//     "static" once enough scans have corroborated it sitting in the same
+//     spot (exactly the property that makes it useful for spotting newly-
+//     revealed walls) - without this step, a motionless obstacle would
+//     silently stop being new after history_length_ cycles (~0.6s),
+//     its track would go unmatched and get dropped, and costmap_
+//     lane_planner would start seeing it on /static_obstacle_points and
+//     could replan around it. A moving object re-detects the same way;
+//     this project's speeds move well under max_track_jump_m_ per cycle.
+//   STEP B - spawn NEW tracks from this cycle's density+shape-filtered
+//     moving_cells blobs, for whichever part isn't already claimed by
+//     STEP A's re-detection (same object, already handled).
+// A track is only dropped - and its location only then becomes eligible
+// for /static_obstacle_points again - once STEP A finds nothing nearby
+// for max_missed_cycles_ consecutive cycles, i.e. the object is actually
+// gone. This is the same category of feature this class's own header
+// comment above says was tried once already and reverted for two
+// confirmed failure modes - this version exists specifically because both
+// are now addressed structurally rather than re-attempted as-is:
+//   1. Centroid jumping between frames: STEP A/B both gate matching by
+//      max_track_jump_m_ - too far away is a NEW track, never (wrongly)
+//      "the same object moved that far in one cycle".
 //   2. Sim-time stalls corrupting velocity: processCycle() already
 //      returns before reaching this code at all when the clock hasn't
 //      advanced since the last cycle (see its own top-of-function guard)
 //      - velocity is always dt/(genuinely elapsed time), never dt/~0.
 // Published as /moving_object_tracking (MarkerArray): a velocity arrow +
-// speed-label text + predicted-trajectory line per track with a valid
-// velocity estimate (a brand-new track has none yet - first sighting
-// only gives a position).
+// speed-label text + predicted-trajectory line per CONFIRMED track with a
+// valid velocity estimate (a brand-new track has none yet - first
+// sighting only gives a position).
 //
 // CONFIRMATION (vehicles/pedestrians only, not shaking leaves/wind-blown
-// debris/sensor jitter): a track only counts as a real mover - and only
-// THEN does its blob's points get published on /moving_obstacle_points -
-// once it's been matched for min_confirm_cycles_ consecutive cycles AND
-// its net straight-line displacement from where it was first seen exceeds
-// min_confirm_displacement_m_. The density+shape filtering above only
-// proves a blob is new/transient, which something jittering in place
-// (leaves, a flag, grass) satisfies just as well as a translating object
-// does from a single cycle's density alone - sustained net displacement
-// over several cycles is the one signal that actually tells them apart,
-// since in-place jitter oscillates back toward its own origin and never
-// accumulates distance no matter how long it keeps triggering the per-
-// cell density check. An unconfirmed blob's points are published as
-// STATIC, not dropped - the same safe default this node already uses for
-// "undecided": they still block the ahead-zone stop gate and path
-// selection, they're just not yet trusted for the moving-specific stop-
-// and-resume-same-path behavior. Confirmation never un-sets once reached.
+// debris/sensor jitter) - VISUALIZATION ONLY, does not gate
+// /moving_obstacle_points or /static_obstacle_points. A track counts as a
+// confirmed real mover once it's been matched for min_confirm_cycles_
+// consecutive cycles AND its net straight-line displacement from where it
+// was first seen exceeds min_confirm_displacement_m_ - sustained net
+// displacement is what actually separates a translating object from
+// something jittering in place (leaves, a flag, grass all satisfy the
+// density+shape filtering above just as well as a real mover does from a
+// single cycle's density alone, since in-place jitter never accumulates
+// distance no matter how long it keeps triggering the per-cell density
+// check). publishTrackingMarkers() only draws confirmed tracks, so
+// /moving_object_tracking's arrows/labels/predicted paths stay specific
+// to vehicles/pedestrians.
+//
+// This does NOT decide /moving_obstacle_points vs /static_obstacle_points
+// membership - that split uses the broader, pre-confirmation moving_cells
+// set (everything density+shape filtering already called new-and-compact)
+// deliberately: costmap_lane_planner only ever reads
+// /static_obstacle_points for lane SELECTION, so a brand-new obstacle -
+// moving or not yet proven moving - must never land there, or it could
+// change which lane is chosen. The vehicle keeps driving its already-
+// chosen lane for ANY new obstacle; only path_obstacle_monitor's ahead-
+// zone gate (which already checks both topics) may stop it once it's
+// actually in the way. Confirmation never un-sets once reached.
 class DynamicObstacleDetector : public rclcpp::Node
 {
 public:
@@ -188,15 +219,21 @@ private:
   std::vector<Blob> computeBlobs(
     const std::unordered_set<int64_t> & moving_cells,
     const std::vector<Point3> & current_points) const;
-  // Nearest-centroid association gated by max_track_jump_m_, velocity
-  // from consecutive matched sightings, missed-cycle pruning - see this
-  // class's own header "TRACKING" comment for the two failure modes this
-  // specifically guards against. Returns the union of every blob's cells
-  // whose matched/spawned track is CONFIRMED (see Track's own comment) -
-  // processCycle() publishes only these cells as moving; everything else
-  // (unconfirmed blobs included) is treated as static.
+  // Re-detects every EXISTING track by proximity to its own last position
+  // in the FULL current cloud (current_points, not just this cycle's
+  // moving_cells) within max_track_jump_m_, then spawns NEW tracks from
+  // whatever part of new_blobs isn't already claimed by that re-detection
+  // - see this class's own header "TRACKING" comment and this method's own
+  // definition for why re-detection must not depend on the per-cycle
+  // density-ratio test. Also runs each track's CONFIRMATION check (see
+  // Track's own comment), setting t.confirmed directly on the Track -
+  // publishTrackingMarkers() reads it from there. Returns the union of
+  // every alive (re-detected or newly spawned) track's cells this cycle -
+  // processCycle() publishes exactly these as moving, everything else as
+  // static.
   std::unordered_set<int64_t> updateTracks(
-    const rclcpp::Time & stamp, const std::vector<Blob> & blobs);
+    const rclcpp::Time & stamp, const std::vector<Blob> & new_blobs,
+    const std::vector<Point3> & current_points);
   void publishTrackingMarkers(const rclcpp::Time & stamp);
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_sub_;
@@ -253,7 +290,12 @@ private:
   // radius-based model has no real line-of-sight/occlusion awareness.
   // Real moving objects this project cares about (person, vehicle) are
   // comparatively compact - this is a pragmatic shape heuristic against
-  // that specific failure mode, not a perfect classifier.
+  // that specific failure mode, not a perfect classifier. Getting this
+  // right matters more than it used to: a wall segment that slips through
+  // this filter now spawns a track that re-detects itself indefinitely
+  // (see updateTracks()'s "STEP A"), permanently excluding that stretch of
+  // wall from /static_obstacle_points instead of just for the few cycles
+  // it used to.
   double max_moving_blob_extent_m_ = 2.5;
   // Fixed tint applied to every published moving point (0-255 each) - a
   // single flat colour, not intensity-mapped, so moving points read as
@@ -267,11 +309,30 @@ private:
   rclcpp::Time last_cycle_time_;
 
   // Tracking params - see this class's own "TRACKING" header comment.
-  // A detected centroid beyond this of every existing track's last
-  // position spawns a new track rather than updating one - the specific
-  // guard against the "centroid jumped between frames" failure mode.
+  // Dual role: (1) the search radius updateTracks()'s STEP A uses to
+  // re-detect an existing track by proximity to its own last position in
+  // the full current cloud, independent of this cycle's density-ratio
+  // test - this is what keeps a long-stationary obstacle permanently
+  // excluded from /static_obstacle_points instead of it graduating back
+  // after history_length_ cycles. (2) a detected new-blob centroid beyond
+  // this of every track's last position is treated as a genuinely
+  // different object rather than the same one having jumped - the
+  // original guard against the "centroid jumped between frames" failure
+  // mode. This project's speeds (walking pedestrian ~1m/s, vehicle a few
+  // km/h, 10Hz cycle) move well under a meter per cycle, so the default
+  // comfortably keeps pace with genuine motion, not just stationary
+  // objects.
   double max_track_jump_m_ = 2.0;
-  // Consecutive cycles a track can go unmatched before being dropped.
+  // STEP A counts current_points within max_track_jump_m_ of a track's
+  // last position - this many are required for that to count as a
+  // re-detection (not just a few stray/noise points at the search
+  // radius's edge). Lower than min_moving_blob_points_ deliberately: this
+  // only needs to confirm "yes, still substantially there", not re-run
+  // the full new-object shape/size classification.
+  int track_redetect_min_points_ = 5;
+  // Consecutive cycles a track can go unmatched (STEP A found nothing
+  // nearby) before being dropped - this is what actually ends the
+  // exclusion, once the object is confirmed gone.
   int max_missed_cycles_ = 5;
   // How far ahead (seconds) the predicted-trajectory line extends.
   double prediction_horizon_sec_ = 2.0;

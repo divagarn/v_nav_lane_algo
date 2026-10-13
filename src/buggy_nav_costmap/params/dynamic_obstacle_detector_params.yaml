@@ -1,13 +1,15 @@
-# Params for dynamic_obstacle_detector_node - moving-obstacle
-# classification ported from the core idea of Asvadi et al. (RAS 2016):
-# compare each occupied cell's point density across the last
-# `history_length` merged scans against what just the current scan alone
-# contributed there. See that node's own header comment for the full
-# mechanism and why it needs no per-object clustering/tracking at all.
-# Purely a perception/visualization node: publishes ONLY the moving points
-# (as a colour-tinted 3D point cloud, full sensor resolution) on
-# /moving_obstacle_points - static points are not published at all, and
-# this does not feed costmap_lane_planner or any planner.
+# Params for dynamic_obstacle_detector_node - moving/static obstacle
+# classification. A cell's density-ratio across the last `history_length`
+# merged scans decides whether it's NEW this cycle; per-object tracking
+# then decides whether it STAYS excluded from /static_obstacle_points -
+# see that node's own header comment for the full mechanism, in
+# particular why a tracked object is excluded for as long as it's
+# physically there, not just while it still looks "new" by density alone.
+# /static_obstacle_points feeds costmap_lane_planner (path SELECTION) when
+# path_obstacle_monitor_node is in the loop - path selection therefore
+# never reacts to any obstacle that appeared after the vehicle started
+# navigating, moving or not. /moving_obstacle_points still reaches
+# path_obstacle_monitor_node's stop gate either way.
 
 dynamic_obstacle_detector:
   ros__parameters:
@@ -75,34 +77,53 @@ dynamic_obstacle_detector:
 
     process_rate_hz: 10.0
 
-    # Per-object tracking (/moving_object_tracking: velocity arrow + speed
-    # label + predicted-trajectory line per tracked object, Autoware-
-    # style) - see this node's own "TRACKING" header comment for the two
-    # failure modes an earlier, reverted attempt hit and how these guard
-    # against them. ALSO gates /moving_obstacle_points itself now (see
-    # CONFIRMATION below) - no longer informational-only.
+    # Per-object tracking - see this node's own "TRACKING" header comment
+    # for the full mechanism. Decides the /moving_obstacle_points vs
+    # /static_obstacle_points split (a tracked object stays excluded from
+    # static for as long as it's physically there, not just while it still
+    # looks "new" by density ratio) AND drives /moving_object_tracking
+    # (velocity arrow + speed label + predicted-trajectory line per
+    # CONFIRMED tracked object, Autoware-style).
     #
-    # A detected object beyond this of every existing track's last known
-    # position spawns a NEW track rather than updating one.
+    # Dual role: (1) the search radius used to re-detect an existing track
+    # by proximity to its own last position in the full current cloud,
+    # each cycle, regardless of density classification - this is what
+    # keeps a stationary obstacle permanently excluded instead of it
+    # graduating back to static after history_length cycles. (2) a
+    # detected new-blob centroid beyond this of every track's last
+    # position is treated as a different object, not the same one having
+    # jumped. Walking-pedestrian/vehicle speeds at this process_rate_hz
+    # move well under this per cycle.
     max_track_jump_m: 2.0
-    # Consecutive cycles a track can go unmatched before being dropped.
+    # How many current-cycle points within max_track_jump_m of a track's
+    # last position count as a re-detection (not just stray/noise points
+    # at the search radius's edge). Lower than min_moving_blob_points
+    # deliberately - this only confirms "still substantially there".
+    track_redetect_min_points: 5
+    # Consecutive cycles re-detection can find nothing nearby before a
+    # track is dropped - this is what actually ends the exclusion, once
+    # the object is confirmed gone.
     max_missed_cycles: 5
     # How far ahead (seconds) the predicted-trajectory line extends.
     prediction_horizon_sec: 2.0
 
     # CONFIRMATION - vehicles/pedestrians only, not shaking tree leaves,
-    # wind-blown debris, or sensor jitter. The density+shape filtering
-    # above only proves a blob is new/transient; something jittering in
-    # place passes that just as well as something translating does, from
-    # one cycle's density alone. Sustained net displacement over several
-    # cycles is what actually tells them apart - in-place jitter
-    # oscillates back toward its own origin and never accumulates
-    # distance, no matter how long it keeps triggering the density check.
-    # A track only counts as a confirmed real mover (and only then does
-    # its blob get published on /moving_obstacle_points, rather than
-    # /static_obstacle_points) once matched for min_confirm_cycles
-    # consecutive cycles AND its straight-line distance from where it was
-    # FIRST seen exceeds min_confirm_displacement_m. Defaults confirm a
-    # walking pedestrian (~1 m/s) in well under half a second.
+    # wind-blown debris, or sensor jitter - but VISUALIZATION ONLY
+    # (/moving_object_tracking draws confirmed tracks only). Does NOT gate
+    # /moving_obstacle_points vs /static_obstacle_points: that split stays
+    # on the broader, pre-confirmation "new and compact" test on purpose -
+    # costmap_lane_planner only ever reads /static_obstacle_points for
+    # lane SELECTION, so a brand-new obstacle (moving or not yet proven
+    # moving) must never land there, or it could change which lane gets
+    # picked. The vehicle keeps driving its already-chosen lane for ANY
+    # new obstacle; only path_obstacle_monitor's ahead-zone gate (which
+    # already checks both topics) may stop it once it's actually in the
+    # way. A track only counts as confirmed once matched for
+    # min_confirm_cycles consecutive cycles AND its straight-line distance
+    # from where it was FIRST seen exceeds min_confirm_displacement_m -
+    # sustained net displacement is what actually separates a translating
+    # object from in-place jitter, which never accumulates distance no
+    # matter how long it keeps triggering the density check. Defaults
+    # confirm a walking pedestrian (~1 m/s) in well under half a second.
     min_confirm_cycles: 3
     min_confirm_displacement_m: 0.3
