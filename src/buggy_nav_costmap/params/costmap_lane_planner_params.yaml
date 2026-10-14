@@ -67,21 +67,14 @@ costmap_lane_planner:
     vehicle_half_length: 1.8
     vehicle_footprint_margin: 0.3
 
-    # Height filter, in the SENSOR's own frame (confirmed live by direct
-    # measurement: the LiDAR sits ~1m above ground, so the ground plane
-    # itself clusters around Z=-1.0, not Z=0) - excludes the ground plane
-    # by a plain height cutoff instead of segment_ground's actual RANSAC
-    # plane fit. Narrower band than segment_ground would use; some very
-    # low obstacles near ground level may be missed as a result - a
-    # deliberate simplicity/robustness tradeoff, not an oversight.
-    min_obstacle_height: -0.6
-    # 5 ft above GROUND, converted into the sensor's own frame: 5ft *
-    # 0.3048 m/ft - 1.0 (LIDAR_HEIGHT, same mounting-height constant
-    # segment_ground.py uses) = 0.524. Ignores anything taller (overhead
-    # signage, branches, etc.) as an obstacle. Also overridable in feet
-    # directly via the real/sim costmap launch files' max_obstacle_height_ft
-    # arg, which does this same conversion.
-    max_obstacle_height: 0.524
+    # Overhead height cutoff only (meters above GROUND, direct - no feet
+    # conversion, no lower bound). Upstream (segment_ground) already
+    # removes the ground plane, so this just ignores anything taller than
+    # a real obstacle should be (overhead signage, branches, etc.).
+    # Converted once in the node's constructor into the sensor-frame value
+    # rebuildObstacleGrid() actually checks. Also overridable directly via
+    # the real/sim costmap launch files' max_obstacle_height_m arg.
+    max_obstacle_height_m: 5.0
     # Radius around each raw obstacle point that counts as "occupied" -
     # stands in for the point's own physical size/the sensor's angular
     # resolution at range, not the vehicle's safety margin (that's
@@ -123,6 +116,17 @@ costmap_lane_planner:
     # lidar_set_debounce_messages/clear_debounce_cycles.
     moving_intrusion_set_cycles: 2
     moving_intrusion_clear_cycles: 5
+
+    # /lane_free_space_blocking (continued): same debounce, but for a
+    # brand-NEW obstacle (/new_obstacle_points - includes an obstacle
+    # before its track has even had a chance to confirm as a real mover)
+    # found inside the GREEN fixed-width lane band (clearance_ either side
+    # of the chosen path) rather than the wider real-sensed orange
+    # corridor - deliberately the narrower check, since a new obstacle
+    # merely somewhere in a wide-open sensed corridor isn't actually in the
+    # vehicle's way. Either this OR the moving check above holds the gate.
+    new_obstacle_intrusion_set_cycles: 2
+    new_obstacle_intrusion_clear_cycles: 5
 
     wheelbase: 1.6
     max_steering_deg: 20.0

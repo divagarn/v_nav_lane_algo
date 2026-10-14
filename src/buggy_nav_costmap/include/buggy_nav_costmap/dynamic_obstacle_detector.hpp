@@ -57,6 +57,20 @@ namespace buggy_nav_costmap
 // EXACTLY the path that was already being computed the whole time,
 // because that path's own obstacle input was never disturbed by it.
 //
+// A THIRD cloud, /new_obstacle_points, is also published every cycle:
+// every point in a density+shape-filtered "new" cell this cycle,
+// regardless of track confirmation (so, unlike /moving_obstacle_points,
+// this includes a blob on the very first cycle it's ever seen - before
+// CONFIRMATION below has had any chance to run). costmap_lane_planner
+// checks this against its own fixed-width lane band and will not let such
+// a point narrow the corridor used for ARC selection - only
+// path_obstacle_monitor_node's ahead-zone stop gate reacts to it. This
+// closes the gap /static_obstacle_points alone leaves open: an unconfirmed
+// blob's points ARE published there too (see CONFIRMATION below), so
+// without this a brand-new obstacle near the lane could still cause a
+// reroute/lane-change in the ~min_confirm_cycles_ worth of time before its
+// track gets confirmed one way or the other.
+//
 // Moving cells are additionally grouped into contiguous blobs (8-
 // connectivity, same grid-hash flood-fill idiom used elsewhere in this
 // package) and any blob with fewer than min_moving_blob_points_ total
@@ -180,6 +194,16 @@ private:
   int coverageCount(int64_t key) const;
   void publishMovingPoints(const rclcpp::Time & stamp, const std::vector<Point3> & moving_points);
   void publishStaticPoints(const rclcpp::Time & stamp, const std::vector<Point3> & static_points);
+  // ALL density+shape-filtered "new" points this cycle (moving_cells after
+  // filterSmallBlobs), regardless of track confirmation - unlike
+  // /moving_obstacle_points (confirmed movers only) this includes a blob
+  // the very first cycle it's ever seen, before tracking has had a chance
+  // to confirm anything. costmap_lane_planner uses this to keep a
+  // brand-new obstacle near the lane from influencing which arc/lane gets
+  // chosen at all (see that node's own checkNewObstacleIntrusion comment) -
+  // purely additive, does not change the /moving_obstacle_points vs
+  // /static_obstacle_points split above.
+  void publishNewObstaclePoints(const rclcpp::Time & stamp, const std::vector<Point3> & points);
   // One Blob (centroid + cell set) per connected blob in the (already
   // fully filtered) final moving_cells set - a second, cheap flood-fill
   // pass purely to get per-object identity for tracking, same 8-
@@ -203,6 +227,7 @@ private:
   sensor_msgs::msg::PointCloud2::SharedPtr latest_cloud_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr moving_points_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr static_points_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr new_obstacle_points_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr tracking_markers_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 
@@ -262,6 +287,12 @@ private:
   int moving_color_r_ = 0;
   int moving_color_g_ = 0;
   int moving_color_b_ = 255;
+  // Tint for /new_obstacle_points - defaults to orange, matching
+  // costmap_lane_planner's own "orange area" (lane_free_space_area)
+  // visualization these points are specifically checked against.
+  int new_obstacle_color_r_ = 255;
+  int new_obstacle_color_g_ = 165;
+  int new_obstacle_color_b_ = 0;
   double process_rate_hz_ = 10.0;
   bool has_last_cycle_time_ = false;
   rclcpp::Time last_cycle_time_;

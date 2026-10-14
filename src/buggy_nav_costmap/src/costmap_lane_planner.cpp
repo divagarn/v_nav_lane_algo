@@ -25,18 +25,19 @@ CostmapLanePlanner::CostmapLanePlanner()
   vehicle_half_width_ = declare_parameter("vehicle_half_width", 1.0);
   vehicle_half_length_ = declare_parameter("vehicle_half_length", 1.8);
   vehicle_footprint_margin_ = declare_parameter("vehicle_footprint_margin", 0.3);
-  min_obstacle_height_ = declare_parameter("min_obstacle_height", -0.6);
-  // Default = 5 ft above GROUND, expressed in the sensor's own frame (see
-  // this value's own comment two lines below the matching yaml entry):
-  // 5ft * 0.3048 m/ft - LIDAR_HEIGHT (1.0m, same mounting height constant
-  // segment_ground.py uses) = 0.524.
-  max_obstacle_height_ = declare_parameter("max_obstacle_height", 0.524);
+  // Meters above the GROUND (direct, no feet conversion) - converted once
+  // here into the sensor-frame value rebuildObstacleGrid() actually checks.
+  double max_obstacle_height_m = declare_parameter("max_obstacle_height_m", 5.0);
+  max_obstacle_height_ = max_obstacle_height_m - kLidarMountHeightM;
   obstacle_inflation_radius_ = declare_parameter("obstacle_inflation_radius", 0.25);
   obstacle_safety_margin_ = declare_parameter("obstacle_safety_margin", 0.3);
   obstacle_search_radius_ = declare_parameter("obstacle_search_radius", 30.0);
   lane_free_space_extra_forward_m_ = declare_parameter("lane_free_space_extra_forward_m", 3.0);
   moving_intrusion_set_cycles_ = declare_parameter("moving_intrusion_set_cycles", 2);
   moving_intrusion_clear_cycles_ = declare_parameter("moving_intrusion_clear_cycles", 5);
+  new_obstacle_intrusion_set_cycles_ = declare_parameter("new_obstacle_intrusion_set_cycles", 2);
+  new_obstacle_intrusion_clear_cycles_ = declare_parameter(
+    "new_obstacle_intrusion_clear_cycles", 5);
   double wheelbase = declare_parameter("wheelbase", 1.6);
   double max_steering_deg = declare_parameter("max_steering_deg", 20.0);
   direction_reference_gain_ = declare_parameter("direction_reference_gain", 6.0);
@@ -103,6 +104,14 @@ CostmapLanePlanner::CostmapLanePlanner()
       movingPointsCallback(msg);
     });
 
+  // See checkNewObstacleIntrusion's own comment - independent of
+  // obstacle_topic_ for the same reason moving_points_sub_ above is.
+  new_obstacle_points_sub_ = create_subscription<sensor_msgs::msg::PointCloud2>(
+    "/new_obstacle_points", rclcpp::SensorDataQoS(),
+    [this](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+      newObstaclePointsCallback(msg);
+    });
+
   // /navigation_enabled is the same topic manual_pose_aligner publishes on
   // 'g' - plain volatile QoS to match its publisher (manual_pose_aligner
   // republishes every 0.2s specifically so a late/volatile subscriber never
@@ -147,6 +156,12 @@ void CostmapLanePlanner::cloudCallback(const sensor_msgs::msg::PointCloud2::Shar
 void CostmapLanePlanner::movingPointsCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg)
 {
   latest_moving_cloud_ = msg;
+}
+
+void CostmapLanePlanner::newObstaclePointsCallback(
+  const sensor_msgs::msg::PointCloud2::SharedPtr msg)
+{
+  latest_new_obstacle_cloud_ = msg;
 }
 
 void CostmapLanePlanner::navigationEnabledCallback(const std_msgs::msg::Bool::SharedPtr msg)
@@ -238,15 +253,23 @@ void CostmapLanePlanner::rebuildObstacleGrid(const Vec2 & pos)
   double search_radius_sq = obstacle_search_radius_ * obstacle_search_radius_;
   double cell = resolution_;
 
+  // Temporary - diagnosing the "/obstacle_area red marker not matching
+  // live LiDAR points" investigation. Not meant to be permanent.
+  int dbg_total = 0, dbg_nonfinite = 0, dbg_height = 0, dbg_radius = 0, dbg_kept = 0;
+
   for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z) {
+    ++dbg_total;
     double lx = *iter_x, ly = *iter_y, lz = *iter_z;
     if (!std::isfinite(lx) || !std::isfinite(ly) || !std::isfinite(lz)) {
+      ++dbg_nonfinite;
       continue;
     }
     // Height filter in the SENSOR's own frame, before transforming -
     // confirmed live the ground plane clusters around Z=-1.0 there
-    // (sensor mounted ~1m up), not around Z=0.
-    if (lz < min_obstacle_height_ || lz > max_obstacle_height_) {
+    // (sensor mounted ~1m up), not around Z=0. Overhead cutoff only, no
+    // lower bound - upstream (segment_ground) already removes the ground.
+    if (lz > max_obstacle_height_) {
+      ++dbg_height;
       continue;
     }
     double wx = tr.x + r00 * lx + r01 * ly + r02 * lz;
@@ -254,14 +277,24 @@ void CostmapLanePlanner::rebuildObstacleGrid(const Vec2 & pos)
 
     double dx = wx - pos.x, dy = wy - pos.y;
     if (dx * dx + dy * dy > search_radius_sq) {
+      ++dbg_radius;
       continue;
     }
 
+    ++dbg_kept;
     obstacle_points_.push_back({wx, wy});
     int cx = static_cast<int>(std::floor(wx / cell));
     int cy = static_cast<int>(std::floor(wy / cell));
     obstacle_grid_[gridKey(cx, cy)].push_back({wx, wy});
   }
+
+  RCLCPP_WARN_THROTTLE(
+    get_logger(), *get_clock(), 1000,
+    "[DBG] total=%d nonfinite=%d height_rejected=%d radius_rejected=%d kept=%d "
+    "tr=(%.3f,%.3f) pos=(%.3f,%.3f) max_h=%.3f search_r=%.1f cloud_frame=%s fixed=%s",
+    dbg_total, dbg_nonfinite, dbg_height, dbg_radius, dbg_kept,
+    tr.x, tr.y, pos.x, pos.y, max_obstacle_height_, obstacle_search_radius_,
+    latest_cloud_->header.frame_id.c_str(), fixed_frame_.c_str());
 }
 
 bool CostmapLanePlanner::isBlockedWorld(double wx, double wy) const
@@ -530,40 +563,20 @@ void CostmapLanePlanner::publishObstacleAreaMarker(const rclcpp::Time & stamp)
   obstacle_area_pub_->publish(marker);
 }
 
-void CostmapLanePlanner::publishFreeLaneAreaMarker(
-  const rclcpp::Time & stamp, const Vec2 & pos, const ArcResult & chosen)
+void CostmapLanePlanner::computeFixedWidthLane(
+  const Vec2 & pos, const ArcResult & chosen,
+  std::vector<Vec2> & centerline, std::vector<Vec2> & left, std::vector<Vec2> & right) const
 {
-  // "Free area lane to navigate" - the chosen path's actual drivable
-  // WIDTH (clearance_ either side), not just its centerline, rendered as
-  // a filled semi-transparent green strip so the real navigable area
-  // ahead is directly visible, matching the same clearance_ the arc
-  // planner's own footprint check enforces.
-  visualization_msgs::msg::Marker marker;
-  marker.header.frame_id = fixed_frame_;
-  marker.header.stamp = stamp;
-  marker.ns = "free_lane_area";
-  marker.id = 0;
-  marker.type = visualization_msgs::msg::Marker::TRIANGLE_LIST;
+  centerline.clear();
+  left.clear();
+  right.clear();
 
-  std::vector<Vec2> centerline;
   centerline.push_back(pos);
   centerline.insert(centerline.end(), chosen.points.begin(), chosen.points.end());
 
   if (centerline.size() < 2) {
-    marker.action = visualization_msgs::msg::Marker::DELETE;
-    free_lane_area_pub_->publish(marker);
     return;
   }
-
-  marker.action = visualization_msgs::msg::Marker::ADD;
-  marker.pose.orientation.w = 1.0;
-  marker.scale.x = 1.0;
-  marker.scale.y = 1.0;
-  marker.scale.z = 1.0;
-  marker.color.r = 0.1;
-  marker.color.g = 0.9;
-  marker.color.b = 0.2;
-  marker.color.a = 0.35;
 
   auto perp_offset = [&](size_t i) -> std::pair<double, double> {
       double dx, dy;
@@ -582,12 +595,48 @@ void CostmapLanePlanner::publishFreeLaneAreaMarker(
       return {-dy / len * clearance_, dx / len * clearance_};
     };
 
-  std::vector<Vec2> left(centerline.size()), right(centerline.size());
+  left.resize(centerline.size());
+  right.resize(centerline.size());
   for (size_t i = 0; i < centerline.size(); ++i) {
     auto [ox, oy] = perp_offset(i);
     left[i] = {centerline[i].x + ox, centerline[i].y + oy};
     right[i] = {centerline[i].x - ox, centerline[i].y - oy};
   }
+}
+
+void CostmapLanePlanner::publishFreeLaneAreaMarker(
+  const rclcpp::Time & stamp, const Vec2 & pos, const ArcResult & chosen)
+{
+  // "Free area lane to navigate" - the chosen path's actual drivable
+  // WIDTH (clearance_ either side), not just its centerline, rendered as
+  // a filled semi-transparent green strip so the real navigable area
+  // ahead is directly visible, matching the same clearance_ the arc
+  // planner's own footprint check enforces.
+  visualization_msgs::msg::Marker marker;
+  marker.header.frame_id = fixed_frame_;
+  marker.header.stamp = stamp;
+  marker.ns = "free_lane_area";
+  marker.id = 0;
+  marker.type = visualization_msgs::msg::Marker::TRIANGLE_LIST;
+
+  std::vector<Vec2> centerline, left, right;
+  computeFixedWidthLane(pos, chosen, centerline, left, right);
+
+  if (centerline.size() < 2) {
+    marker.action = visualization_msgs::msg::Marker::DELETE;
+    free_lane_area_pub_->publish(marker);
+    return;
+  }
+
+  marker.action = visualization_msgs::msg::Marker::ADD;
+  marker.pose.orientation.w = 1.0;
+  marker.scale.x = 1.0;
+  marker.scale.y = 1.0;
+  marker.scale.z = 1.0;
+  marker.color.r = 0.1;
+  marker.color.g = 0.9;
+  marker.color.b = 0.2;
+  marker.color.a = 0.35;
 
   auto add_point = [&](const Vec2 & p) {
       geometry_msgs::msg::Point gp;
@@ -783,9 +832,52 @@ void CostmapLanePlanner::checkMovingIntrusion(
       moving_intrusion_latched_ = false;
     }
   }
+}
 
+void CostmapLanePlanner::checkNewObstacleIntrusion(
+  const std::vector<Vec2> & left, const std::vector<Vec2> & right)
+{
+  bool intrusion_now = false;
+
+  if (left.size() >= 2 && latest_new_obstacle_cloud_) {
+    sensor_msgs::PointCloud2ConstIterator<float> iter_x(*latest_new_obstacle_cloud_, "x");
+    sensor_msgs::PointCloud2ConstIterator<float> iter_y(*latest_new_obstacle_cloud_, "y");
+    for (; iter_x != iter_x.end() && !intrusion_now; ++iter_x, ++iter_y) {
+      if (!std::isfinite(*iter_x) || !std::isfinite(*iter_y)) {
+        continue;
+      }
+      // Same two-triangle split publishFreeLaneAreaMarker draws, so
+      // "inside" here means literally inside the green fixed-width strip.
+      for (size_t i = 0; i + 1 < left.size(); ++i) {
+        if (pointInTriangle(*iter_x, *iter_y, left[i], right[i], right[i + 1]) ||
+          pointInTriangle(*iter_x, *iter_y, left[i], right[i + 1], left[i + 1]))
+        {
+          intrusion_now = true;
+          break;
+        }
+      }
+    }
+  }
+
+  if (intrusion_now) {
+    new_obstacle_intrusion_consecutive_ += 1;
+    new_obstacle_intrusion_clear_consecutive_ = 0;
+    if (new_obstacle_intrusion_consecutive_ >= new_obstacle_intrusion_set_cycles_) {
+      new_obstacle_intrusion_latched_ = true;
+    }
+  } else {
+    new_obstacle_intrusion_consecutive_ = 0;
+    new_obstacle_intrusion_clear_consecutive_ += 1;
+    if (new_obstacle_intrusion_clear_consecutive_ >= new_obstacle_intrusion_clear_cycles_) {
+      new_obstacle_intrusion_latched_ = false;
+    }
+  }
+}
+
+void CostmapLanePlanner::publishLaneFreeSpaceBlocking()
+{
   std_msgs::msg::Bool msg;
-  msg.data = moving_intrusion_latched_;
+  msg.data = moving_intrusion_latched_ || new_obstacle_intrusion_latched_;
   lane_free_space_blocking_pub_->publish(msg);
 }
 
@@ -908,6 +1000,12 @@ void CostmapLanePlanner::planCycle()
     computeFreeSpaceCorridor(pos, final_result, free_space_centerline, free_space_left, free_space_right);
     publishLaneFreeSpaceAreaMarker(stamp, free_space_centerline, free_space_left, free_space_right);
     checkMovingIntrusion(free_space_left, free_space_right);
+
+    std::vector<Vec2> fixed_centerline, fixed_left, fixed_right;
+    computeFixedWidthLane(pos, final_result, fixed_centerline, fixed_left, fixed_right);
+    checkNewObstacleIntrusion(fixed_left, fixed_right);
+
+    publishLaneFreeSpaceBlocking();
   }
   nav_status_pub_->publish(std_msgs::msg::String().set__data("OK"));
 }

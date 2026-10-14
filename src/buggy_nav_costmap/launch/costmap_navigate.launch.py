@@ -85,12 +85,12 @@ def generate_launch_description():
         description='How far along the chosen lane the steering target point sits. Higher '
                     'smooths wide turns but cuts sharp corners more; lower tracks tighter but '
                     'can be jerkier.')
-    max_obstacle_height_ft_arg = DeclareLaunchArgument(
-        'max_obstacle_height_ft', default_value='5.0',
-        description='Ignore LiDAR points taller than this many feet above the GROUND as '
-                    'obstacles (overhead signage, branches, etc.) - converted here into '
-                    "max_obstacle_height's own sensor-frame meters (ft*0.3048 - 1.0, the "
-                    'LiDAR mounting height).')
+    max_obstacle_height_m_arg = DeclareLaunchArgument(
+        'max_obstacle_height_m', default_value='5.0',
+        description='Ignore LiDAR points taller than this many meters above the GROUND as '
+                    'obstacles (overhead signage, branches, etc.) - direct meters, no feet '
+                    'conversion. Converted by the node itself into its own sensor-frame '
+                    'value.')
     ahead_zone_length_m_arg = DeclareLaunchArgument(
         'ahead_zone_length_m', default_value='5.0',
         description="Length (m) of path_obstacle_monitor_node's ahead-zone stop gate (the "
@@ -106,9 +106,6 @@ def generate_launch_description():
         "'/static_obstacle_points' if '",
         LaunchConfiguration('enable_moving_obstacle_stop'),
         "' == 'true' else '/non_ground_points_filtered'"])
-    max_obstacle_height_m = PythonExpression([
-        "float('", LaunchConfiguration('max_obstacle_height_ft'), "') * 0.3048 - 1.0"])
-
     costmap_lane_planner = Node(
         package='buggy_nav_costmap',
         executable='costmap_lane_planner_node',
@@ -123,7 +120,8 @@ def generate_launch_description():
                     LaunchConfiguration('lane_lookahead'), value_type=float),
                 'steering_lookahead_distance': ParameterValue(
                     LaunchConfiguration('steering_lookahead_distance'), value_type=float),
-                'max_obstacle_height': ParameterValue(max_obstacle_height_m, value_type=float),
+                'max_obstacle_height_m': ParameterValue(
+                    LaunchConfiguration('max_obstacle_height_m'), value_type=float),
             },
         ],
     )
@@ -164,7 +162,7 @@ def generate_launch_description():
         path_obstacle_monitor_params_arg,
         lane_lookahead_arg,
         steering_lookahead_distance_arg,
-        max_obstacle_height_ft_arg,
+        max_obstacle_height_m_arg,
         ahead_zone_length_m_arg,
         costmap_lane_planner,
         dynamic_obstacle_detector,

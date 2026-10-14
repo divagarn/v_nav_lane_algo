@@ -64,6 +64,15 @@ private:
   void publishObstacleAreaMarker(const rclcpp::Time & stamp);
   void publishFreeLaneAreaMarker(
     const rclcpp::Time & stamp, const Vec2 & pos, const ArcResult & chosen);
+  // Green - the chosen path's actual drivable WIDTH (clearance_ either
+  // side), shared by publishFreeLaneAreaMarker (the visualization) and
+  // checkNewObstacleIntrusion (the enforced-safety check) so both agree on
+  // exactly the same shape - same reasoning as computeFreeSpaceCorridor
+  // below, just at the fixed clearance_ width instead of the real sensed
+  // one.
+  void computeFixedWidthLane(
+    const Vec2 & pos, const ArcResult & chosen,
+    std::vector<Vec2> & centerline, std::vector<Vec2> & left, std::vector<Vec2> & right) const;
   // The REAL LiDAR-sensed free-space corridor along the chosen lane (+
   // lane_free_space_extra_forward_m past its end) - centerline plus the
   // left/right WORLD POINTS lateralClearance() actually reached at each
@@ -101,7 +110,31 @@ private:
   // corridor's own boundary (lateralClearance stops at them), so
   // path_obstacle_monitor's separate /static_obstacle_points check against
   // its fixed-width ahead-zone remains the static-obstacle safety net.
+  // Sets moving_intrusion_latched_ (see its own comment) - no longer
+  // publishes directly; publishLaneFreeSpaceBlocking() below ORs it
+  // together with new_obstacle_intrusion_latched_ into one publish, so
+  // either source alone is enough to hold the latch.
   void checkMovingIntrusion(const std::vector<Vec2> & left, const std::vector<Vec2> & right);
+  // A brand-NEW obstacle (see dynamic_obstacle_detector's own
+  // /new_obstacle_points comment - this includes a blob before its track
+  // has even had a chance to confirm as a real mover, unlike
+  // /moving_obstacle_points) crossing into the GREEN fixed-width lane band
+  // - deliberately the narrower, enforced-safety-margin band
+  // (computeFixedWidthLane), not the wider real-sensed orange corridor,
+  // since a new obstacle merely somewhere in a wide-open sensed corridor
+  // isn't actually in the vehicle's way. Same no-reroute-only-stop
+  // principle /moving_obstacle_points already gets: this obstacle source
+  // is deliberately never fed into obstacle_topic_/isBlockedWorld (so it
+  // can never itself narrow the corridor or change which arc gets chosen),
+  // it only ever latches the ahead-zone stop gate via
+  // publishLaneFreeSpaceBlocking().
+  void checkNewObstacleIntrusion(const std::vector<Vec2> & left, const std::vector<Vec2> & right);
+  // Combines moving_intrusion_latched_ and new_obstacle_intrusion_latched_
+  // (either one alone holds the gate) into the single
+  // /lane_free_space_blocking publish path_obstacle_monitor_node already
+  // ORs into its own stop decision.
+  void publishLaneFreeSpaceBlocking();
+  void newObstaclePointsCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
 
   // This node's own tf buffer - one lookup per cycle, shared by the
   // pose-graph walker and the arc planner (see planCycle()'s own comment).
@@ -116,6 +149,12 @@ private:
 
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr moving_points_sub_;
   sensor_msgs::msg::PointCloud2::SharedPtr latest_moving_cloud_;
+  // /new_obstacle_points - see checkNewObstacleIntrusion's own comment.
+  // Independent subscription for the same reason moving_points_sub_ is:
+  // obstacle_topic_ only ever carries /static_obstacle_points (or the raw
+  // cloud, feature off), never this.
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr new_obstacle_points_sub_;
+  sensor_msgs::msg::PointCloud2::SharedPtr latest_new_obstacle_cloud_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr lane_free_space_blocking_pub_;
   // Per-CYCLE consecutive confirmation (not per-message like path_obstacle_
   // monitor_node's own debounce) - this node already evaluates against
@@ -125,6 +164,14 @@ private:
   int moving_intrusion_consecutive_ = 0;
   int moving_intrusion_clear_consecutive_ = 0;
   bool moving_intrusion_latched_ = false;
+  // Same per-cycle hysteresis pattern as moving_intrusion_* above, its own
+  // independent counters/latch so a new-obstacle intrusion and a moving
+  // one don't reset each other's debounce.
+  int new_obstacle_intrusion_set_cycles_ = 2;
+  int new_obstacle_intrusion_clear_cycles_ = 5;
+  int new_obstacle_intrusion_consecutive_ = 0;
+  int new_obstacle_intrusion_clear_consecutive_ = 0;
+  bool new_obstacle_intrusion_latched_ = false;
 
   // Captures "where the pose-graph route was when navigation was just
   // turned on" (manual_pose_aligner's 'g' key), snapped onto the nearest
@@ -187,12 +234,14 @@ private:
   double max_curvature_ = 1.0;
   double clearance_ = 1.3;
 
-  // Points are in the sensor's own frame (confirmed live by direct
-  // measurement: the LiDAR sits ~1m up, so the ground plane itself
-  // clusters around Z=-1.0) - this band excludes the ground while keeping
-  // real obstacles, same values already validated for this exact sensor.
-  double min_obstacle_height_ = -0.6;
-  double max_obstacle_height_ = 0.524;  // 5 ft above ground, sensor frame
+  // Points are in the sensor's own frame. Upstream (segment_ground) already
+  // removes the ground plane, so this is only an overhead cutoff (signage,
+  // branches, etc.) - no lower bound. max_obstacle_height_m is meters above
+  // the GROUND (declared param, direct from the launch file); converted
+  // once here into this sensor-frame value by subtracting the LiDAR
+  // mounting height.
+  static constexpr double kLidarMountHeightM = 1.0;
+  double max_obstacle_height_ = 4.0;
   // Radius around each raw obstacle point that counts as "occupied" for
   // isBlockedWorld() - stands in for the point's own physical size/the
   // sensor's angular resolution at range, not the vehicle's safety margin

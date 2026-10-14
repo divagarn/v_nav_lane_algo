@@ -73,6 +73,18 @@ dynamic_obstacle_detector:
     moving_color_g: 0
     moving_color_b: 255
 
+    # /new_obstacle_points - every density+shape-filtered "new" point this
+    # cycle, regardless of track confirmation (unlike /moving_obstacle_points,
+    # confirmed movers only). costmap_lane_planner checks these against its
+    # fixed-width lane band so a brand-new obstacle close to the lane can
+    # never itself cause a lane change - only the ahead-zone stop gate reacts
+    # to it, same "classification never reroutes" principle moving points
+    # already get. Default tint is orange to match that node's own
+    # "orange area" (lane_free_space_area) visualization.
+    new_obstacle_color_r: 255
+    new_obstacle_color_g: 165
+    new_obstacle_color_b: 0
+
     process_rate_hz: 10.0
 
     # Per-object tracking (/moving_object_tracking: velocity arrow + speed

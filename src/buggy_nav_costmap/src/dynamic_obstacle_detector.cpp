@@ -34,6 +34,9 @@ DynamicObstacleDetector::DynamicObstacleDetector()
   moving_color_r_ = declare_parameter("moving_color_r", 0);
   moving_color_g_ = declare_parameter("moving_color_g", 0);
   moving_color_b_ = declare_parameter("moving_color_b", 255);
+  new_obstacle_color_r_ = declare_parameter("new_obstacle_color_r", 255);
+  new_obstacle_color_g_ = declare_parameter("new_obstacle_color_g", 165);
+  new_obstacle_color_b_ = declare_parameter("new_obstacle_color_b", 0);
   process_rate_hz_ = declare_parameter("process_rate_hz", 10.0);
   max_track_jump_m_ = declare_parameter("max_track_jump_m", 2.0);
   max_missed_cycles_ = declare_parameter("max_missed_cycles", 5);
@@ -60,6 +63,8 @@ DynamicObstacleDetector::DynamicObstacleDetector()
     "/moving_obstacle_points", 1);
   static_points_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
     "/static_obstacle_points", 1);
+  new_obstacle_points_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(
+    "/new_obstacle_points", 1);
   tracking_markers_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
     "/moving_object_tracking", 1);
 
@@ -312,6 +317,46 @@ void DynamicObstacleDetector::publishMovingPoints(
   moving_points_pub_->publish(cloud_msg);
 }
 
+void DynamicObstacleDetector::publishNewObstaclePoints(
+  const rclcpp::Time & stamp, const std::vector<Point3> & points)
+{
+  // Same XYZRGB layout as publishMovingPoints - just its own flat tint
+  // (orange by default) so these read as visually distinct in RViz.
+  sensor_msgs::msg::PointCloud2 cloud_msg;
+  cloud_msg.header.frame_id = fixed_frame_;
+  cloud_msg.header.stamp = stamp;
+
+  sensor_msgs::PointCloud2Modifier modifier(cloud_msg);
+  modifier.setPointCloud2Fields(
+    4,
+    "x", 1, sensor_msgs::msg::PointField::FLOAT32,
+    "y", 1, sensor_msgs::msg::PointField::FLOAT32,
+    "z", 1, sensor_msgs::msg::PointField::FLOAT32,
+    "rgb", 1, sensor_msgs::msg::PointField::FLOAT32);
+  modifier.resize(points.size());
+
+  uint32_t packed_rgb =
+    (static_cast<uint32_t>(new_obstacle_color_r_) << 16) |
+    (static_cast<uint32_t>(new_obstacle_color_g_) << 8) |
+    static_cast<uint32_t>(new_obstacle_color_b_);
+  float rgb_float;
+  std::memcpy(&rgb_float, &packed_rgb, sizeof(float));
+
+  sensor_msgs::PointCloud2Iterator<float> iter_x(cloud_msg, "x");
+  sensor_msgs::PointCloud2Iterator<float> iter_y(cloud_msg, "y");
+  sensor_msgs::PointCloud2Iterator<float> iter_z(cloud_msg, "z");
+  sensor_msgs::PointCloud2Iterator<float> iter_rgb(cloud_msg, "rgb");
+  for (const auto & p : points) {
+    *iter_x = static_cast<float>(p.x);
+    *iter_y = static_cast<float>(p.y);
+    *iter_z = static_cast<float>(p.z);
+    *iter_rgb = rgb_float;
+    ++iter_x; ++iter_y; ++iter_z; ++iter_rgb;
+  }
+
+  new_obstacle_points_pub_->publish(cloud_msg);
+}
+
 void DynamicObstacleDetector::publishStaticPoints(
   const rclcpp::Time & stamp, const std::vector<Point3> & static_points)
 {
@@ -416,6 +461,20 @@ void DynamicObstacleDetector::processCycle()
   }
 
   moving_cells = filterSmallBlobs(moving_cells, current_grid);
+
+  // Every point in a density+shape-filtered "new" cell THIS cycle,
+  // regardless of track confirmation - published separately from the
+  // moving/static split below so a brand-new obstacle (first cycle ever
+  // seen, confirmation hasn't had a chance to run yet) is still visible to
+  // costmap_lane_planner's own lane-pinning check. See publishNewObstaclePoints'
+  // own comment.
+  std::vector<Point3> new_obstacle_points;
+  for (const auto & p : current_points) {
+    if (moving_cells.count(cellKey(p.x, p.y))) {
+      new_obstacle_points.push_back(p);
+    }
+  }
+  publishNewObstaclePoints(stamp, new_obstacle_points);
 
   // Tracking + confirmation BEFORE the point-output split below - see
   // Track's own comment: density+shape filtering alone can't tell a
