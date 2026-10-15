@@ -99,6 +99,11 @@ def generate_launch_description():
                     'arg. Addresses map drift that persists even after a correct manual '
                     'alignment, by giving slam_toolbox a much better odometry prior to '
                     'correct from between its own scan-match updates.')
+    radar_fusion_arg = DeclareLaunchArgument(
+        'radar_fusion', default_value='false',
+        description='true: additionally launch radar_fusion/radar_fusion.launch.py against '
+                    "radar_sim's synthetic radar topic - see sensors_bringup.launch.py's "
+                    'own description of this arg (no real Doppler in sim).')
 
     map_file_name = PathJoinSubstitution([maps_dir, LaunchConfiguration('map_name')])
 
@@ -115,6 +120,7 @@ def generate_launch_description():
             'ground_filter': LaunchConfiguration('ground_filter'),
             'ground_filter_device': LaunchConfiguration('ground_filter_device'),
             'enable_kiss_icp': LaunchConfiguration('enable_kiss_icp'),
+            'radar_fusion': LaunchConfiguration('radar_fusion'),
         }.items(),
     )
 
@@ -206,6 +212,7 @@ def generate_launch_description():
         ground_filter_device_arg,
         map_name_arg,
         enable_kiss_icp_arg,
+        radar_fusion_arg,
         sensors_bringup,
         pointcloud_to_laserscan,
         slam_toolbox,

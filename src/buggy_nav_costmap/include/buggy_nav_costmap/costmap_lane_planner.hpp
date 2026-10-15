@@ -48,6 +48,13 @@ private:
     double clear_distance = 0.0;
     std::vector<Vec2> points;
     double centering_error = 0.0;
+    // Average of min(left, right) sensed clearance along the arc - how
+    // much standoff this candidate keeps from the NEAREST obstacle on
+    // either side, not just left/right symmetry (centering_error is 0 for
+    // a path centered in a tight 2m gap just as much as one centered in a
+    // wide-open 10m one - this is what actually distinguishes them). See
+    // obstacle_clearance_preference_'s own comment for how it's used.
+    double min_side_clearance = 0.0;
   };
 
   void cloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
@@ -225,6 +232,16 @@ private:
   int lane_num_candidates_ = 15;
   double corridor_scan_limit_ = 8.0;
   double lane_straight_preference_ratio_ = 0.85;
+  // Weight on ArcResult::min_side_clearance in the candidate score (see
+  // its own comment) - rewards standing off further from the nearest
+  // obstacle when multiple candidates are already comparably clear and
+  // comparably centered, instead of always settling for the bare minimum
+  // clearance_ margin right next to it. Deliberately small relative to
+  // direction_reference_gain_ (6.0 default): this only re-ranks among
+  // arcs the pose-graph bias already considers roughly as good for the
+  // commanded turn direction - it never fights that bias for WHICH way to
+  // turn, only how much room to leave once going that way.
+  double obstacle_clearance_preference_ = 0.5;
   double lane_smoothing_alpha_ = 0.3;
   double steering_lookahead_distance_ = 6.0;
   double vehicle_half_width_ = 1.0;

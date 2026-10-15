@@ -98,6 +98,12 @@ def generate_launch_description():
         description='true: additionally launch camera_static_tf + camera_lidar_fusion_node '
                     "(distance-based safety-stop signals) - see real_sensors_bringup."
                     "launch.py's own description of this arg.")
+    radar_fusion_arg = DeclareLaunchArgument(
+        'radar_fusion', default_value='false',
+        description='true: additionally launch radar_fusion/radar_fusion.launch.py (the '
+                    'IMM-Kalman radar static/moving object tracker) - see '
+                    "real_sensors_bringup.launch.py's own description of this arg. Needs "
+                    'radar:=true as well to actually get data.')
 
     map_file_name = PathJoinSubstitution([maps_dir, LaunchConfiguration('map_name')])
 
@@ -114,6 +120,7 @@ def generate_launch_description():
             'camera_device': LaunchConfiguration('camera_device'),
             'radar': LaunchConfiguration('radar'),
             'camera_lidar_fusion': LaunchConfiguration('camera_lidar_fusion'),
+            'radar_fusion': LaunchConfiguration('radar_fusion'),
         }.items(),
     )
 
@@ -187,6 +194,7 @@ def generate_launch_description():
         camera_device_arg,
         radar_arg,
         camera_lidar_fusion_arg,
+        radar_fusion_arg,
         real_sensors_bringup,
         pointcloud_to_laserscan,
         slam_toolbox,

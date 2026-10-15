@@ -1,0 +1,219 @@
+# Radar-only adaptation of this node's params for this workspace - no
+# camera/object_detection runs here (camera.enabled: false below), and
+# output_frame is odom rather than map (see its own comment). radar_topic/
+# odom_topic/steering_topic already match this workspace's existing
+# umrr_ros2_driver, wheel_odometry and steering_calculator_node topics
+# as-is. ego_motion.radar_mount_* and path.wheelbase below are this
+# vehicle's own measured values, unchanged from the source workspace.
+radar_fusion:
+  ros__parameters:
+    radar_topic: /smart_radar/can_targets_0
+    # Real-hardware default (wheel_odometry's own /odom). Overridden to
+    # /ackermann_steering_controller/odometry for sim by radar_fusion.
+    # launch.py - nothing in sim publishes plain /odom (tf_odom_relay only
+    # relays a TF, never a nav_msgs/Odometry topic), and path.curvature_
+    # source: odom reading nothing meant the per-cycle "auto" fallback
+    # silently landed on /steering_angle instead - confirmed live as the
+    # actual cause of the predicted path curving backwards.
+    odom_topic: /odom
+    steering_topic: /steering_angle  # std_msgs/Float32
+    camera_objects_topic: /object_detection/objects
+    # map - matches the friend's own closed_loop_nav default exactly
+    # (fusion_pipeline.launch.xml). Requires map -> base_link TF, i.e.
+    # slam_toolbox localization converged and 'g' pressed in
+    # manual_pose_aligner - publishes nothing until then.
+    output_frame: map
+    base_frame: base_link            # vehicle frame used with the configured radar mount below
+    reorder_delay: 0.0               # s; 0 = every message is processed on arrival (no waiting)
+    timing_log_s: 10.0               # log cycle processing times every N s (0 = off)
+    radar_height_above_ground: 0.5   # m; set by launch (ground filter, camera gates, path)
+
+    ego_motion:
+      # radar_doppler needs REAL Doppler (radar_sim's radial_speed is
+      # always 0) - radar_fusion.launch.py overrides this to odom for sim.
+      speed_source: radar_doppler    # radar_doppler | odom   (yaw rate always from odom)
+      # Real-hardware default: front bumper from rear-axle base_link.
+      # Overridden to 1.4 for sim by radar_fusion.launch.py - matches
+      # radar_sim.py's own base_link->umrr TF mount (base_link mid-
+      # wheelbase), so the path corridor's own internal frame conversion
+      # (computed from this config, not live TF) uses the right offset too.
+      radar_mount_x: 2.2
+      radar_mount_y: 0.0
+      radar_mount_yaw: 0.0
+
+    # ---------------------------------------------------------------- radar pipeline
+    radar:
+      min_range: 1.0
+      max_range: 80.0
+      min_snr: 0.0
+      min_rcs: -100.0
+      max_abs_azimuth: 1.0           # rad (~57 deg)
+      z_min: -3.0
+      z_max: 4.0
+      # 1. ground / overhead removal (heights above ground; each test allows range * elevation_std slack)
+      ground_filter: true
+      elevation_std: 0.05            # rad, radar elevation noise
+      below_ground_margin: 0.15      # drop returns below ground - margin (road, multipath)
+      ground_band: 0.25              # static weak returns measured lower than this are ground clutter
+      ground_max_rcs: 0.0            # dBsm
+      static_speed: 0.3              # m/s over ground
+      overhead_height: 3.5           # drop returns higher than this (trees, signs, ceilings)
+      # 2. DBSCAN on (x, y, over-ground Doppler)
+      cluster_eps_xy: 1.0            # m
+      cluster_eps_rel: 0.02          # + 2 % of range
+      cluster_eps_doppler: 1.5       # m/s
+      cluster_min_points: 1          # core point size; > 1 drops isolated points as noise
+      # measurement noise
+      range_std: 0.25
+      azimuth_std: 0.02
+      doppler_std: 0.3
+      glint_std: 0.4                 # m, reflection point wander on extended objects (hedges, walls)
+      # Real-hardware default - overridden to false for sim by radar_fusion.
+      # launch.py, since radar_sim's radial_speed is always 0 (no ground-
+      # truth velocity model there).
+      use_doppler: true
+
+    # 3. IMM tracker
+    imm:
+      models: [st, cv, ct]           # stationary + constant velocity + coordinated turn
+      pos_std_st: 0.1                # stationary position random walk [m/sqrt(s)]
+      accel_std_cv: 1.5
+      accel_std_ct: 1.0
+      yaw_accel_std: 0.5
+      transition: [0.95, 0.04, 0.01,
+                   0.03, 0.92, 0.05,
+                   0.01, 0.07, 0.92]
+      initial_mode_probs: [0.5, 0.4, 0.1]
+      stationary_prob: 0.6           # P(st) above this -> motion_state stationary
+      moving_min_sigma: 2.0          # moving only if speed > 2 std of the speed estimate
+      motion_alpha: 0.3              # stationary/moving temporal filter: EMA of the per-scan evidence
+      motion_enter: 0.7              # -> moving above this
+      motion_exit: 0.3               # -> stationary below this
+      turn_rate_threshold: 0.1       # rad/s, with CT dominant -> turning
+
+    tracker:
+      init_vel_std_radial: 0.7
+      init_vel_std_tangential: 4.0
+      gate_chi2: 13.8                # cluster -> track (position + Doppler)
+      absorb_gate: 9.0               # unmatched cluster this close to an updated track: no new track
+      confirm_hits: 1                # hits within confirm_window scans
+      confirm_window: 5
+      tentative_max_missed: 1        # scans
+      max_missed: 2                  # scans (~0.33 s at 15 Hz)
+      existence_init: 0.3            # existence probability: birth value
+      existence_hit_gain: 0.3        # hit:  pe += gain * (1 - pe)
+      existence_miss_factor: 0.7     # miss: pe *= factor
+      ghost_check: true              # double-bounce ghosts: same bearing, 2x range, 2x relative radial speed
+      ghost_az_tol_deg: 3.0
+      ghost_range_tol: 0.1           # relative
+      ghost_doppler_tol: 1.0         # m/s
+      ghost_min_count: 3             # scans
+      max_pos_std: 4.0
+      max_range: 80.0
+      moving_speed_threshold: 0.6
+      merge_distance: 0.8
+
+    # ---------------------------------------------------------------- camera
+    camera_tracker:                  # ByteTrack on the detector boxes
+      high_thresh: 0.5
+      low_thresh: 0.15
+      new_track_thresh: 0.5
+      match_iou: 0.3
+      low_match_iou: 0.5
+      min_hits: 3
+      max_lost_s: 0.5
+      class_consistent: true
+
+    camera:                          # radar track <-> camera box (one box per track at most)
+      enabled: false                 # radar only in this workspace - no object_detection node runs here
+      intrinsics_file: ""            # set by launch (calibration app output, perception_apps format)
+      extrinsics_file: ""
+      rectified: true                # detections come from the rectified image (object_detection)
+      rectify_balance: 0.0           # must match object_detection
+      rectify_fov_scale: 1.0
+      min_detection_score: 0.3
+      # gates (pixels at 1920 px width, scaled to the image)
+      margin_px: 24.0                # horizontal: track projects inside the box +- margin
+      object_height: 2.5             # vertical: [ground, ground + h] at the track range overlaps the box
+      range_ratio_min: 0.5           # radar range / ground range of the box bottom
+      range_ratio_max: 2.0
+      border_px: 5.0                 # box bottom this close to the border: no range gate
+      # association: bearing d2 (gated) + closest-track preference -> bounded cheap JPDA -> one-to-one
+      gate_d2: 25.0                  # 5 sigma on the bearing residual
+      range_pref: 3.0                # m
+      jpda_max_candidates: 4
+      jpda_pd: 0.9
+      jpda_clutter: 0.001
+      # Bayes on the bearing (range, velocity, existence stay radar)
+      sigma_px: 4.0                  # camera bearing noise: px (at 1920) + frac * box width
+      sigma_frac: 0.03
+      sigma_extent: 0.5              # m, radar point vs box centre
+      sigma_radar_min_deg: 0.5
+      radar_min_weight: 0.6          # radar keeps at least this share of the fused bearing
+      consistency_sigma: 3.0         # larger disagreement -> no bearing correction
+      hold_s: 0.3                    # status radar+camera is kept this long on radar cycles
+      class_vote_decay: 0.97         # class temporal filter (per associated frame)
+
+    lidar:
+      enabled: false                 # lidar path is implemented but off for now
+      topic: /velodyne_points
+      to_radar_xyzrpy: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]   # needs lidar-radar calibration
+      min_range: 1.0
+      max_range: 60.0
+      z_min: -0.3
+      z_max: 2.5
+      voxel: 0.2
+      cluster_eps: 0.6
+      cluster_min_points: 8
+      pos_std: 0.15
+
+    # ---------------------------------------------------------------- output
+    path:                            # predicted ego path -> in_path flag
+      enabled: true
+      # odom (NOT steering/auto): the real vehicle controller's own
+      # odometry yaw rate is correctly REP103-signed (+ = left) by
+      # construction, standard ros2_control math - no custom sign handling
+      # needed. steering_calculator_node.py's /steering_angle, by contrast,
+      # explicitly flips its own sign before publishing ("positive becomes
+      # right turn") specifically for this project's real-hardware
+      # convention - "auto" silently falling back to that signal (once any
+      # non-zero steering arrives) with this field's default "+1 = left"
+      # assumption is what actually caused the predicted path to curve
+      # backwards, confirmed live. odom_topic itself is set per sim/real by
+      # radar_fusion.launch.py (see its own comment) since nothing in this
+      # workspace's sim publishes plain /odom.
+      curvature_source: odom         # steering | odom | auto (steering once non-zero, else odom yaw rate)
+      wheelbase: 1.6                 # m
+      steering_ratio: 1.0            # steering-wheel / road-wheel angle (1 if the topic is road-wheel)
+      steering_in_degrees: true
+      steering_offset: 0.0           # raw value when driving straight
+      steering_sign: 1.0             # +1 if positive turns left - unused while curvature_source: odom
+      half_width: 0.8                # vehicle half width + margin [m]
+      length: 40.0                   # m along the path
+      min_speed_odom: 0.5            # m/s; odom curvature held below this
+      max_curvature: 0.5             # 1/m
+      max_heading_change: 1.6        # rad (~90 deg); on tight turns the path ends after this turn
+      smoothing: 0.3           # EMA weight per curvature sample (steering / odom yaw rate are noisy)
+
+    relative_motion:
+      prediction_horizon: 0.5        # s; future position/path fields for planner decisions
+      radial_speed_threshold: 0.3    # m/s deadband for approaching vs moving_away
+      min_ego_speed: 0.3             # m/s; same_direction is undefined below this
+      min_object_speed: 0.3          # m/s; reject noisy velocity headings below this
+      same_direction_max_angle: 30.0 # deg between ego and object over-ground velocity
+
+    stop_zone:                       # corridor just ahead of the radar; planner stops on entry
+      horizon: 3.0                   # s; objects constant velocity, ego holds speed + yaw rate
+      step: 0.1                      # s
+      min_distance: 3.0              # m ahead of the radar at standstill
+      time_headway: 1.5              # s; zone length += ego speed * headway
+
+    output:                          # /radar_fusion/objects: confirmed radar tracks only
+      tf_tolerance: 0.5              # s; max age of the newest TF when it does not cover the output stamp (gap bridged with ego motion)
+      trigger: all                # camera: publish per camera frame (30 Hz), radar only updates tracks
+                                     #   (radar publishes if the camera is silent > camera_timeout); all: both
+      camera_timeout: 0.2            # s
+      max_range: 40.0                # m; every object in front within this range (in_path is only a field)
+      min_existence: 0.6             # existence probability to enter the final list
+      keep_existence: 0.3            # ... and to stay in it (pedestrians miss single scans: ~3 misses)
+      max_static_height: 2.0         # m; stationary radar-only tracks higher than this (canopy) are dropped

@@ -41,6 +41,19 @@ costmap_lane_planner:
     lane_num_candidates: 15
     corridor_scan_limit: 8.0
     lane_straight_preference_ratio: 0.85
+    # Rewards picking the candidate with more standoff from the nearest
+    # obstacle (min of its left/right sensed clearance, averaged along the
+    # arc) when multiple candidates are already comparably clear and
+    # comparably centered - without this, two candidates centered equally
+    # well score identically regardless of whether that center is a tight
+    # 2m gap or a wide-open 10m one, so the planner would happily hug right
+    # next to an obstacle it didn't need to. Scaled well below
+    # direction_reference_gain (6.0) on purpose - this only refines choice
+    # among arcs the pose-graph bias already treats as comparable for the
+    # commanded turn, it never competes with that bias over WHICH way to
+    # turn. Raise if the lane still hugs obstacle_area too closely with
+    # free space available; 0 disables (back to centering-only).
+    obstacle_clearance_preference: 0.5
     lane_smoothing_alpha: 0.3
     # MUST match steering_calculator_node's own lookahead_distance param
     # (default 4.0, run unmodified in the launch commands given for this

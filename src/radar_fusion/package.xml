@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>radar_fusion</name>
+  <version>0.1.0</version>
+  <description>Radar IMM multi-object tracker (static/moving classification + per-object Doppler velocity). Camera/lidar fusion code paths exist but are disabled by default in this workspace - radar only, see radar_fusion_params.yaml.</description>
+  <maintainer email="n.divagar18@gmail.com">divagar</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>perception_msgs</depend>
+  <depend>fusion_common</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
+  <depend>eigen</depend>
+  <exec_depend>fusion_visualization</exec_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

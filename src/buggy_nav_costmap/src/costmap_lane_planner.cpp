@@ -20,6 +20,7 @@ CostmapLanePlanner::CostmapLanePlanner()
   lane_num_candidates_ = declare_parameter("lane_num_candidates", 15);
   corridor_scan_limit_ = declare_parameter("corridor_scan_limit", 8.0);
   lane_straight_preference_ratio_ = declare_parameter("lane_straight_preference_ratio", 0.85);
+  obstacle_clearance_preference_ = declare_parameter("obstacle_clearance_preference", 0.5);
   lane_smoothing_alpha_ = declare_parameter("lane_smoothing_alpha", 0.3);
   steering_lookahead_distance_ = declare_parameter("steering_lookahead_distance", 6.0);
   vehicle_half_width_ = declare_parameter("vehicle_half_width", 1.0);
@@ -359,6 +360,7 @@ CostmapLanePlanner::ArcResult CostmapLanePlanner::arcIsClear(
   double step = resolution_;
   int n_steps = static_cast<int>(lane_lookahead_ / step);
   double centering_error_sum = 0.0;
+  double min_side_sum = 0.0;
   int centering_samples = 0;
 
   for (int i = 1; i <= n_steps; ++i) {
@@ -413,11 +415,13 @@ CostmapLanePlanner::ArcResult CostmapLanePlanner::arcIsClear(
       double left = lateralClearance(wx, wy, world_theta, 1, corridor_scan_limit_);
       double right = lateralClearance(wx, wy, world_theta, -1, corridor_scan_limit_);
       centering_error_sum += std::abs(left - right);
+      min_side_sum += std::min(left, right);
       centering_samples += 1;
     }
   }
 
   result.centering_error = centering_samples ? centering_error_sum / centering_samples : 0.0;
+  result.min_side_clearance = centering_samples ? min_side_sum / centering_samples : 0.0;
   return result;
 }
 
@@ -961,7 +965,13 @@ void CostmapLanePlanner::planCycle()
       double ex = r->points.empty() ? pos.x : r->points.back().x;
       double ey = r->points.empty() ? pos.y : r->points.back().y;
       double bias = directionAndReferenceBonus(r->curvature, ex, ey);
-      return r->centering_error - bias;
+      // -obstacle_clearance_preference_ * min_side_clearance: more
+      // standoff from the nearest obstacle scores better (lower), see
+      // that member's own comment. Added on top of, not instead of,
+      // centering_error - a candidate still has to be well-centered to
+      // win, this just also rewards picking the wider of two similarly-
+      // centered options when free space allows it.
+      return r->centering_error - obstacle_clearance_preference_ * r->min_side_clearance - bias;
     };
 
   const ArcResult * chosen = good_enough.front();

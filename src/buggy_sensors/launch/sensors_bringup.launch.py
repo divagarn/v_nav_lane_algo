@@ -22,6 +22,17 @@ remaps between the two upstream sources.
 enable_kiss_icp:=true swaps tf_odom_relay out for kiss_icp_node (LiDAR
 scan-registration odometry) as the odom->base_link source - see that arg's
 own description for why.
+
+radar_fusion:=true (default false) additionally launches radar_fusion/
+radar_fusion.launch.py (the IMM-Kalman radar static/moving object tracker
+with per-object velocity, ported from a colleague's closed_loop_nav
+workspace - see that package's own launch file docstring) against
+radar_sim's synthetic /smart_radar/can_targets_0 (radial_speed is always
+0 in sim - see radar_sim.py's own docstring - so Doppler-based motion
+classification can't be meaningfully exercised here, only the pipeline
+wiring/tracking-by-position-derivative path can be smoke-tested in sim;
+real Doppler behavior needs the real radar, see real_sensors_bringup.
+launch.py's own radar_fusion arg).
 """
 
 import os
@@ -37,6 +48,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     pkg_buggy_description = get_package_share_directory('buggy_description')
+    pkg_radar_fusion = get_package_share_directory('radar_fusion')
 
     world_file_arg = DeclareLaunchArgument(
         'world_file', default_value='rect_loop_track.world',
@@ -64,6 +76,11 @@ def generate_launch_description():
                     'immune to wheel slip, unlike wheel-based odometry. See '
                     'buggy_mapping/launch/localize.launch.py for why this exists (map '
                     'drift after correct manual alignment).')
+    radar_fusion_arg = DeclareLaunchArgument(
+        'radar_fusion', default_value='false',
+        description='true: additionally launch radar_fusion/radar_fusion.launch.py against '
+                    "radar_sim's synthetic radar topic - see this file's own docstring for "
+                    'the no-real-Doppler-in-sim caveat. false (default): not launched.')
 
     non_ground_points_source = PythonExpression([
         "'/non_ground_points' if '", LaunchConfiguration('ground_filter'),
@@ -148,6 +165,24 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     )
 
+    radar_fusion_bringup = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pkg_radar_fusion, 'launch', 'radar_fusion.launch.py')
+        ),
+        launch_arguments={
+            'use_sim_time': 'true',
+            # Explicit, NOT left to radar_fusion.launch.py's own default -
+            # confirmed live that its DeclareLaunchArgument default silently
+            # fails to resolve through two IncludeLaunchDescription layers
+            # (this file -> radar_fusion.launch.py), leaving the node on
+            # pure C++ struct defaults with radar_fusion_params.yaml never
+            # actually loaded at all.
+            'params_file': os.path.join(
+                pkg_radar_fusion, 'config', 'radar_fusion_params.yaml'),
+        }.items(),
+        condition=IfCondition(LaunchConfiguration('radar_fusion')),
+    )
+
     return LaunchDescription([
         world_file_arg,
         spawn_x_arg,
@@ -157,10 +192,12 @@ def generate_launch_description():
         ground_filter_arg,
         ground_filter_device_arg,
         enable_kiss_icp_arg,
+        radar_fusion_arg,
         gazebo,
         segment_ground,
         self_hit_filter,
         tf_odom_relay,
         kiss_icp_node,
         radar_sim,
+        radar_fusion_bringup,
     ])

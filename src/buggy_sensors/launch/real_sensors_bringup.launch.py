@@ -25,6 +25,13 @@ exact driver. Neither camera nor radar is wired into sim - sim already
 has its own radar stand-in (radar_sim.py) and camera is explicitly not
 yet modeled there (see gazebo.launch.py's own comment).
 
+radar_fusion:=true additionally launches radar_fusion/radar_fusion.launch.py
+(IMM-Kalman radar static/moving object tracker with per-object Doppler
+velocity, ported from a colleague's closed_loop_nav workspace - see that
+package's own launch file docstring). Independent of `radar` above - this
+only brings up the tracker node, it does not start the radar driver itself;
+set both together (same convention as camera_lidar_fusion below).
+
 camera_lidar_fusion:=true additionally launches camera_static_tf (rough,
 uncalibrated base_link->camera_link - see that node's own docstring) and
 camera_lidar_fusion_node, ported from delhi_demo_ws's ground_segmentation
@@ -79,6 +86,7 @@ def generate_launch_description():
     pkg_velodyne_pointcloud = get_package_share_directory('velodyne_pointcloud')
     pkg_camera_processing = get_package_share_directory('camera_processing')
     pkg_umrr_ros2_driver = get_package_share_directory('umrr_ros2_driver')
+    pkg_radar_fusion = get_package_share_directory('radar_fusion')
 
     feedback_port_arg = DeclareLaunchArgument('feedback_port', default_value='/dev/ttyUSB0')
     ground_filter_arg = DeclareLaunchArgument(
@@ -127,6 +135,15 @@ def generate_launch_description():
                     "this file's own docstring). false (default): neither runs. Requires "
                     'something else publishing Detection2DArray on detection_array_topic - '
                     'this toggle does not bring up a detector itself.')
+    radar_fusion_arg = DeclareLaunchArgument(
+        'radar_fusion', default_value='false',
+        description='true: additionally launch radar_fusion/radar_fusion.launch.py (the '
+                    'IMM-Kalman radar static/moving object tracker, ported from a '
+                    "colleague's closed_loop_nav workspace - see that package's own "
+                    'radar_fusion.launch.py docstring). Needs radar:=true (or the sim '
+                    'radar_sim.py stand-in) actually publishing /smart_radar/can_targets_0 '
+                    'for this to produce anything - this toggle does not imply that one, '
+                    'same independent-toggle convention as camera_lidar_fusion above.')
 
     publish_wheel_odom_tf = ParameterValue(
         PythonExpression([
@@ -275,6 +292,23 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('radar')),
     )
 
+    # use_sim_time deliberately NOT forwarded here - real hardware only.
+    radar_fusion_bringup = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pkg_radar_fusion, 'launch', 'radar_fusion.launch.py')
+        ),
+        launch_arguments={
+            'use_sim_time': 'false',
+            # Explicit, NOT left to radar_fusion.launch.py's own default -
+            # see sensors_bringup.launch.py's own comment for why (confirmed
+            # live: its default silently fails to resolve through nested
+            # IncludeLaunchDescription layers, leaving the yaml unloaded).
+            'params_file': os.path.join(
+                pkg_radar_fusion, 'config', 'radar_fusion_params.yaml'),
+        }.items(),
+        condition=IfCondition(LaunchConfiguration('radar_fusion')),
+    )
+
     camera_static_tf = Node(
         package='buggy_perception',
         executable='camera_static_tf',
@@ -348,6 +382,8 @@ def generate_launch_description():
              "pkill -9 -f '__node:=[s]mart_radar'; "
              "pkill -9 -f '__node:=[c]amera_static_tf'; "
              "pkill -9 -f '__node:=[c]amera_lidar_fusion_node'; "
+             "pkill -9 -f '__node:=[r]adar_fusion'; "
+             "pkill -9 -f '__node:=[f]usion_visualization'; "
              'sleep 0.5; exit 0'],
         name='cleanup_stale_sensor_nodes',
         output='screen',
@@ -367,6 +403,7 @@ def generate_launch_description():
                 kiss_icp_node,
                 camera_bringup,
                 radar_bringup,
+                radar_fusion_bringup,
                 camera_static_tf,
                 camera_lidar_fusion_node,
             ],
@@ -381,6 +418,7 @@ def generate_launch_description():
         camera_arg,
         camera_device_arg,
         radar_arg,
+        radar_fusion_arg,
         camera_lidar_fusion_arg,
         cleanup_stale_sensor_nodes,
         start_sensors,

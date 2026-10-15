@@ -1,0 +1,27 @@
+fusion_visualization:
+  ros__parameters:
+    objects_topic: /radar_fusion/objects              # final fused list (in_path flags, ego path)
+    image_topic: /object_detection/image_rect          # rectified image (the one the detector used)
+    camera:
+      intrinsics_file: ""           # set by launch
+      extrinsics_file: ""
+      rectified: true               # must match object_detection / radar_fusion
+      rectify_balance: 0.0
+      rectify_fov_scale: 1.0
+    radar_height_above_ground: 0.5  # set by launch; boxes stand on the ground plane
+    radar_frame: umrr               # sensor-relative scene/overlay helpers are only valid in this frame
+    range_ring_m: 40.0              # green arc = final-list range (radar_fusion output.max_range, set by launch)
+    radar_fov:                      # blue sector = radar field of view kept by the radar pipeline
+      max_abs_azimuth: 1.0          # rad; set by launch = radar_fusion radar.max_abs_azimuth
+      max_range: 80.0               # m;   set by launch = radar_fusion radar.max_range
+    marker_lifetime_s: 0.3
+    relevant:                       # ~/markers_relevant: moving or in-path objects only
+      require_both: false           # true: only objects that are moving AND in the path
+    markers_max_rate: 30.0          # Hz; RViz marker rebuilds (0 = every fusion output); 30 = every camera frame
+    overlay:                        # boxes drawn on the image: off by default (RViz shows the plain
+      enabled: false                # camera image + the fused-track markers; drawing + reliable
+                                    # 1.5 MB images back-pressured the detector)
+      show_window: false            # also show an OpenCV window (set by launch)
+      max_wait_s: 0.5               # drop frames without a fusion result after this
+      max_rate: 15.0                # Hz; overlay images (0 = every frame). Lower it / scale 0.5 over Wi-Fi
+      scale: 1.0
